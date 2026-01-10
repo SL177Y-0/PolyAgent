@@ -1,0 +1,53 @@
+2026-01-09 23:39:12,691 INFO __main__ - Starting Polymarket Spike Sam Bot
+2026-01-09 23:39:13,114 INFO src.clob_client - API credentials ready
+2026-01-09 23:39:13,633 INFO src.clob_client - Resolved token id for 'Will Al Kholood Saudi Club win on 2026-01-09?': 6864032875063744778369427551669536559967...
+2026-01-09 23:39:13,634 INFO src.bot - ============================================================
+2026-01-09 23:39:13,634 INFO src.bot - Bot starting...
+2026-01-09 23:39:13,634 INFO src.bot - ============================================================
+2026-01-09 23:39:13,634 INFO src.bot - Signature mode: 2
+2026-01-09 23:39:13,634 INFO src.bot - Token: 686403287506374477836942755166...
+2026-01-09 23:39:13,634 INFO src.bot - Trade size: $1.00
+2026-01-09 23:39:13,634 INFO src.bot - Spike threshold: 0.3000%
+2026-01-09 23:39:13,635 INFO src.bot - Take profit: 0.5% | Stop loss: 0.4%
+2026-01-09 23:39:13,635 INFO src.bot - Max hold: 30s
+2026-01-09 23:39:13,635 INFO src.bot - History size: 60
+2026-01-09 23:39:13,635 INFO src.bot - Poll interval: 1.0s
+2026-01-09 23:39:13,635 INFO src.bot - Dry run: False
+2026-01-09 23:39:13,635 INFO src.bot - ============================================================
+2026-01-09 23:39:13,635 INFO src.bot - WebSocket disabled - using REST API polling
+2026-01-09 23:39:14,153 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 0 samples (0s) | Min: 0.0000 | Max: 0.0000 | Avg: 0.0000
+2026-01-09 23:39:15,664 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 0 samples (2s) | Min: 0.0000 | Max: 0.0000 | Avg: 0.0000
+2026-01-09 23:39:17,237 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 0 samples (3s) | Min: 0.0000 | Max: 0.0000 | Avg: 0.0000
+2026-01-09 23:39:18,748 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 0 samples (5s) | Min: 0.0000 | Max: 0.0000 | Avg: 0.0000
+2026-01-09 23:39:20,353 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 5 samples (6s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:39:21,932 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 6 samples (8s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:39:23,412 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 7 samples (9s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:39:25,051 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 8 samples (11s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:39:26,596 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 9 samples (12s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:39:28,201 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 10 samples (14s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:40:00,434 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 30 samples (46s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:40:47,455 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:41:34,223 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:42:21,716 INFO src.bot - \U0001f4ca REST: 0.0025 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0025 | Max: 0.0025 | Avg: 0.0025
+2026-01-09 23:43:09,420 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: -80.00% | History: 60 samples (94s) | Min: 0.0005 | Max: 0.0025 | Avg: 0.0024
+2026-01-09 23:43:56,350 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: -80.00% | History: 60 samples (93s) | Min: 0.0005 | Max: 0.0025 | Avg: 0.0014
+2026-01-09 23:44:43,252 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:45:29,288 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (91s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:46:15,996 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (91s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:47:02,672 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:47:49,236 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:48:36,372 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:49:22,772 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:50:09,526 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:50:56,755 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (92s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:51:44,517 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:52:32,099 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (94s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:53:19,338 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:54:06,761 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:54:54,391 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (94s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:55:42,858 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (95s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:56:30,760 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (95s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:57:17,957 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:58:03,429 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (91s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:58:50,863 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (91s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
+2026-01-09 23:59:38,309 INFO src.bot - \U0001f4ca REST: 0.0005 | Spike: +0.00% | History: 60 samples (93s) | Min: 0.0005 | Max: 0.0005 | Avg: 0.0005
