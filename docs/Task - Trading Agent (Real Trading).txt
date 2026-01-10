@@ -1,0 +1,240 @@
+﻿Trading Agent (Real Trading)  
+(Project Brief)
+Unimarket
+1. Goal
+Build a simple, modular trading agent system that can place real trades on prediction markets.
+The goal of this phase is to prove:
+* market data can be monitored,
+
+* tradeable events can be detected,
+
+* strategies can decide actions,
+
+* real orders can be executed safely,
+
+* and positions + P&L can be tracked correctly.
+
+This is an initial real-trading version, not a full-scale production system.
+________________
+
+
+2. High-Level Flow (Must Follow)
+   * Market Data
+   *  → Event Detection
+   *  → Strategy Decision
+   *  → Risk Check
+   *  → Order Execution (Real)
+   *  → Position & P&L Tracking
+   *  → Logging
+
+
+Each block should be implemented cleanly and separately.
+________________
+
+
+3. Data Scouting (Simple)
+   * Fetch live market price periodically (e.g. every 30–60 seconds)
+
+   * Maintain a short rolling price history
+
+   * Orderbook usage is optional (basic spread or liquidity summary only)
+
+Example output:
+      * {
+      *   "market_id": "X",
+      *   "price": 0.42,
+      *   "timestamp": "..."
+      * }
+
+
+________________
+
+
+4. Event Detection (Spike Only)
+Detect price spike events.
+Logic:
+      * Compare current price with historical prices
+
+      * Trigger a spike event if price moves ≥ configured % within:
+
+         * 10 minutes
+
+         * 30 minutes
+
+         * OR cumulatively over ~60 minutes
+
+Example event:
+            * {
+            *   "event": "spike",
+            *   "direction": "up",
+            *   "magnitude": 0.08
+            * }
+
+
+No trading logic here — detection only.
+________________
+
+
+5. Strategy (Rule-Based, LLM-Ready)
+Implement one rule-based strategy.
+Strategy: Spike Sam (Fade Spike)
+Current required behavior:
+            * Spike UP → sell
+
+            * Spike DOWN → buy
+
+            * Ignore weak or noisy spikes
+
+Decision output:
+               * {
+               *   "action": "buy | sell | ignore",
+               *   "size_usd": 2
+               * }
+
+
+Design Requirement
+Strategy logic must be encapsulated in a single decision function, for example:
+               * decide_action(event, market_state, config) → decision
+
+
+This is required so that LLM support can be added later as a simple function extension (not part of this project).
+LLM integration is explicitly out of scope for now.
+________________
+
+
+6. Risk Controls (Mandatory)
+Before placing any real order, enforce:
+               * Min and Max trade size (USD)
+
+               * Max one open position per market
+
+               * Max holding time (minutes)
+
+               * Optional stop-loss %
+
+               * Entry and Exit (take profit %s)
+
+If any rule fails → do not place the order.
+Risk checks must be applied before execution.
+________________
+
+
+7. Order Execution (Real Trading)
+                  * Place real buy/sell orders using the provided trading API
+
+                  * Use market orders or best-available execution
+
+                  * Track:
+
+                     * order ID
+
+                     * fill price
+
+                     * filled size
+
+                     * execution timestamp
+
+No advanced execution logic required.
+________________
+
+
+8. Position & P&L Tracking
+Track per market:
+                        * current position (long / short / flat)
+
+                        * entry price
+
+                        * current price
+
+                        * realized P&L
+
+                        * unrealized P&L
+
+                        * holding duration
+
+This can be in-memory or persisted simply.
+________________
+
+
+9. Monitoring & Logs
+Log all key actions clearly:
+                           * Spike detected
+
+                           * Strategy decision
+
+                           * Risk approval / rejection
+
+                           * Order placed
+
+                           * Order filled
+
+                           * Position closed
+
+                           * P&L updated
+
+Logs should make it easy to answer:
+“Why did the agent trade here?”
+________________
+
+
+10. Configuration
+Agent configuration should be simple and editable:
+                              * {
+                              *   "market_id": "X",
+                              *   "spike_threshold": 0.08,
+                              *   "trade_size_usd": 2,
+                              *   "max_hold_minutes": 60
+                              * }
+
+
+________________
+
+
+11. Deliverables
+The freelancer should deliver:
+                              * Working source code
+
+                              * Simple README explaining:
+
+                                 * how to run the agent
+
+                                 * how to configure markets
+
+                                    * Example run showing:
+
+                                       * live data
+
+                                       * real trade placement
+
+                                       * position and P&L updates
+
+________________
+
+
+12. Tech Notes
+                                          * Language: Python or TypeScript
+
+                                          * Clean, readable code
+
+                                          * No UI required
+
+                                          * No ML / LLM work required
+
+                                          * Focus on correctness and safety
+
+________________
+
+
+13. Success Criteria
+This phase is successful if:
+                                             * Agent runs continuously
+
+                                             * Spike events are detected
+
+                                             * Real orders are placed correctly
+
+                                             * Risk limits are respected
+
+                                             * Positions and P&L are accurate
+
+                                             * Logs clearly explain behavior
