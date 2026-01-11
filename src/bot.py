@@ -136,10 +136,10 @@ class Bot:
         # Thread safety lock for shared state (position, history) between WebSocket thread and main loop
         self._state_lock = threading.Lock()
 
-        # User WebSocket for settlement confirmation (soft 2s timeout fallback)
+        # User WebSocket for settlement confirmation (longer timeout for Polymarket)
         self.user_ws_client: Optional[UserWebSocketSyncWrapper] = None
         self.use_user_websocket = USER_WEBSOCKET_AVAILABLE
-        self.settlement_timeout_seconds = 2.0  # Soft timeout for settlement confirmation
+        self.settlement_timeout_seconds = 90.0  # Polymarket settlements can take 60-90 seconds
 
         # Persistence
         self.state_file = Path("data/position.json")
@@ -455,6 +455,30 @@ class Bot:
         pos = self.open_position
         side = "SELL" if pos.position_type == "LONG" else "BUY"
 
+        # SAFETY CHECK: Don't exit if position is still pending settlement
+        if pos.pending_settlement:
+            logger.debug(f"[EXIT_SKIPPED] Position still pending settlement, waiting...")
+            return
+
+        # SAFETY CHECK: Verify we actually own tokens before trying to sell
+        if side == "SELL":
+            actual_shares = self.client.get_token_balance(self.token_id)
+            if actual_shares <= 0:
+                # Check if settlement just confirmed
+                if self.user_ws_client and pos.entry_order_id:
+                    if self.user_ws_client.is_settled(pos.entry_order_id):
+                        # Settlement confirmed but API hasn't updated yet - wait a bit
+                        logger.info("[EXIT_WAITING] Settlement confirmed but tokens not visible yet, waiting 5s...")
+                        import time
+                        time.sleep(5)
+                        actual_shares = self.client.get_token_balance(self.token_id)
+                
+                if actual_shares <= 0:
+                    logger.warning(f"[EXIT_DELAYED] Cannot SELL yet - tokens not in wallet (still settling)")
+                    logger.info("[TIP] Will retry on next price update once tokens arrive")
+                    # DON'T clear position - tokens will arrive, keep position open
+                    return
+
         # Calculate realized P&L
         pnl = pos.calculate_pnl(price)
         pnl_pct = pnl["pnl_pct"]
@@ -482,10 +506,15 @@ class Bot:
             )
             if result.success:
                 order_id = result.response.get('orderID', 'N/A')
-                filled = result.response.get('data', {}).get('filledAmount', 'N/A')
-                logger.info(f"[ORDER_FILLED] ID={order_id} | Shares: {filled}")
+                filled = result.response.get('matchedAmount', 'N/A')
+                logger.info(f"[EXIT_FILLED] ID={order_id} | Matched: ${filled}")
                 # Track exit time for settlement delay
                 self.last_exit_time = datetime.now(timezone.utc)
+            else:
+                # Exit order failed - log the reason
+                error_msg = result.response.get('error', 'Unknown error')
+                error_reason = result.response.get('reason', 'unknown')
+                logger.warning(f"[EXIT_FAILED] {error_msg} (reason: {error_reason})")
         except Exception as e:
             logger.warning(f"[EXIT_FAILED] {e}")
 
@@ -547,6 +576,13 @@ class Bot:
 
             # Entry logic
             if self.open_position is None and self._enough_cooldown():
+                # PRIORITY: Initial inventory acquisition - buy immediately at session start
+                if not self.initial_inventory_acquired:
+                    logger.info("[STRATEGY] Session start - acquiring initial inventory with BUY")
+                    self._enter("BUY", price, "initial_inventory_acquisition")
+                    return
+                
+                # Normal spike detection for subsequent trades
                 threshold = self.cfg.spike_threshold_pct
                 if abs(spike_pct) >= threshold:
                     self.spikes_detected += 1
