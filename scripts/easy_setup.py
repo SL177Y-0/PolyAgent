@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""Interactive setup wizard for PolyAgent.
+
+This script helps new users configure their .env file with:
+- Private key setup
+- Market selection
+- Trading parameters
+- Risk management settings
+
+Usage:
+    python scripts/easy_setup.py
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+# Fix Windows console encoding
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    import requests
+except ImportError:
+    print("[X] requests library not found. Install with: pip install requests")
+    sys.exit(1)
+
+ENV_FILE = PROJECT_ROOT / ".env"
+ENV_EXAMPLE = PROJECT_ROOT / ".env.example"
+GAMMA_API = "https://gamma-api.polymarket.com"
+
+
+def clear_screen():
+    """Clear terminal screen."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
+def print_header(title: str):
+    """Print a section header."""
+    print("\n" + "=" * 60)
+    print(f"  {title}")
+    print("=" * 60 + "\n")
+
+
+def prompt(question: str, default: str = "", required: bool = True, hide: bool = False) -> str:
+    """Prompt user for input."""
+    if default:
+        question = f"{question} [{default}]"
+    
+    while True:
+        if hide:
+            import getpass
+            try:
+                value = getpass.getpass(f"{question}: ")
+            except Exception:
+                value = input(f"{question}: ")
+        else:
+            value = input(f"{question}: ").strip()
+        
+        if not value and default:
+            return default
+        if not value and required:
+            print("  [!] This field is required.")
+            continue
+        return value
+
+
+def prompt_choice(question: str, options: list[str], default: int = 0) -> int:
+    """Prompt user to choose from options."""
+    print(f"\n{question}")
+    for i, opt in enumerate(options):
+        marker = ">" if i == default else " "
+        print(f"  {marker} {i + 1}. {opt}")
+    
+    while True:
+        choice = input(f"\nEnter choice [1-{len(options)}] (default: {default + 1}): ").strip()
+        if not choice:
+            return default
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(options):
+                return idx
+        except ValueError:
+            pass
+        print(f"  [!] Please enter a number between 1 and {len(options)}")
+
+
+def prompt_yes_no(question: str, default: bool = True) -> bool:
+    """Prompt for yes/no answer."""
+    default_str = "Y/n" if default else "y/N"
+    while True:
+        answer = input(f"{question} [{default_str}]: ").strip().lower()
+        if not answer:
+            return default
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
+        print("  [!] Please enter 'y' or 'n'")
+
+
+def validate_private_key(key: str) -> tuple[bool, str]:
+    """Validate private key format."""
+    # Remove 0x prefix if present
+    if key.startswith("0x"):
+        key = key[2:]
+    
+    # Check length
+    if len(key) != 64:
+        return False, f"Key must be 64 hex characters (got {len(key)})"
+    
+    # Check hex format
+    if not re.match(r'^[0-9a-fA-F]{64}$', key):
+        return False, "Key must contain only hex characters (0-9, a-f)"
+    
+    return True, key
+
+
+def search_markets(query: str) -> list[dict]:
+    """Search for markets by query."""
+    try:
+        resp = requests.get(
+            f"{GAMMA_API}/events",
+            params={"title_contains": query, "active": True, "closed": False, "limit": 10},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        print(f"  [X] Search error: {e}")
+    return []
+
+
+def get_market_by_slug(slug: str) -> dict | None:
+    """Fetch market by slug."""
+    try:
+        resp = requests.get(f"{GAMMA_API}/events", params={"slug": slug}, timeout=10)
+        if resp.status_code == 200:
+            events = resp.json()
+            if events:
+                return events[0]
+    except Exception:
+        pass
+    return None
+
+
+def load_existing_env() -> dict[str, str]:
+    """Load existing .env file if it exists."""
+    config = {}
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                config[key.strip()] = value.strip()
+    return config
+
+
+def save_env(config: dict[str, str]):
+    """Save configuration to .env file."""
+    # Preserve comments from example file
+    lines = []
+    
+    if ENV_EXAMPLE.exists():
+        template = ENV_EXAMPLE.read_text()
+    else:
+        template = """# PolyAgent Configuration
+# Generated by easy_setup.py
+
+# === REQUIRED ===
+PRIVATE_KEY=
+SIGNATURE_TYPE=0
+FUNDER_ADDRESS=
+
+# === MARKET ===
+MARKET_SLUG=
+# MARKET_TOKEN_ID=
+
+# === TRADING ===
+DRY_RUN=true
+DEFAULT_TRADE_SIZE_USD=1.0
+
+# === STRATEGY ===
+SPIKE_THRESHOLD_PCT=1.0
+MIN_SPIKE_STRENGTH=0.3
+
+# === RISK MANAGEMENT ===
+TAKE_PROFIT_PCT=3.0
+STOP_LOSS_PCT=2.5
+MAX_HOLD_SECONDS=120
+
+# === ADVANCED ===
+HOST=https://clob.polymarket.com
+CHAIN_ID=137
+LOG_LEVEL=INFO
+WSS_ENABLED=true
+KILLSWITCH_ON_SHUTDOWN=true
+"""
+    
+    # Update template with new values
+    result_lines = []
+    for line in template.splitlines():
+        if "=" in line and not line.strip().startswith("#"):
+            key = line.split("=")[0].strip()
+            if key in config:
+                result_lines.append(f"{key}={config[key]}")
+            else:
+                result_lines.append(line)
+        else:
+            result_lines.append(line)
+    
+    # Add any new keys not in template
+    existing_keys = set()
+    for line in result_lines:
+        if "=" in line and not line.strip().startswith("#"):
+            existing_keys.add(line.split("=")[0].strip())
+    
+    for key, value in config.items():
+        if key not in existing_keys:
+            result_lines.append(f"{key}={value}")
+    
+    ENV_FILE.write_text("\n".join(result_lines))
+    print(f"\n[+] Configuration saved to {ENV_FILE}")
+
+
+def setup_wallet(config: dict[str, str]) -> dict[str, str]:
+    """Configure wallet settings."""
+    print_header("WALLET SETUP")
+    
+    print("Your private key is needed to sign transactions.")
+    print("It will be stored in the .env file (add to .gitignore!).\n")
+    
+    # Check if key already exists
+    existing_key = config.get("PRIVATE_KEY", "")
+    if existing_key and len(existing_key) >= 10:
+        masked = existing_key[:6] + "..." + existing_key[-4:]
+        if prompt_yes_no(f"Private key already configured ({masked}). Keep it?", default=True):
+            pass
+        else:
+            key = prompt("Enter your private key (64 hex chars, no 0x prefix)", hide=True)
+            valid, result = validate_private_key(key)
+            if valid:
+                config["PRIVATE_KEY"] = result
+            else:
+                print(f"  [!] {result}")
+                return setup_wallet(config)
+    else:
+        key = prompt("Enter your private key (64 hex chars, no 0x prefix)", hide=True)
+        valid, result = validate_private_key(key)
+        if valid:
+            config["PRIVATE_KEY"] = result
+        else:
+            print(f"  [!] {result}")
+            return setup_wallet(config)
+    
+    # Signature type
+    print("\nSignature type determines how transactions are signed:")
+    sig_type = prompt_choice(
+        "Select signature type:",
+        [
+            "EOA (Standard wallet) - Use if you control the private key directly",
+            "Gnosis Safe Proxy - Use if you're using a Gnosis Safe/Smart Wallet",
+        ],
+        default=0
+    )
+    config["SIGNATURE_TYPE"] = str(sig_type * 2)  # 0 or 2
+    
+    if sig_type == 1:  # Gnosis
+        print("\nFor Gnosis Safe, you need the funding address (the Safe address):")
+        funder = prompt("Enter your Gnosis Safe address (0x...)")
+        config["FUNDER_ADDRESS"] = funder
+    
+    return config
+
+
+def setup_market(config: dict[str, str]) -> dict[str, str]:
+    """Configure market settings."""
+    print_header("MARKET SETUP")
+    
+    existing_slug = config.get("MARKET_SLUG", "")
+    if existing_slug:
+        if prompt_yes_no(f"Current market: {existing_slug}. Keep it?", default=True):
+            return config
+    
+    print("You can find markets at https://polymarket.com\n")
+    
+    choice = prompt_choice(
+        "How would you like to set the market?",
+        [
+            "Enter Polymarket URL or slug directly",
+            "Search for markets by keyword",
+            "Find volatile/active markets automatically",
+        ],
+        default=0
+    )
+    
+    if choice == 0:
+        # Direct entry
+        url_or_slug = prompt("Enter Polymarket URL or market slug")
+        
+        # Extract slug
+        if url_or_slug.startswith("http"):
+            parts = url_or_slug.split("/")
+            for i, p in enumerate(parts):
+                if p in ("event", "markets") and i + 1 < len(parts):
+                    url_or_slug = parts[i + 1].split("?")[0]
+                    break
+        
+        config["MARKET_SLUG"] = url_or_slug
+        
+        # Try to validate
+        market = get_market_by_slug(url_or_slug)
+        if market:
+            print(f"\n  [+] Found: {market.get('title', 'Unknown')}")
+        else:
+            print(f"\n  [!] Could not verify market. Will try at runtime.")
+    
+    elif choice == 1:
+        # Search
+        query = prompt("Enter search keywords")
+        print(f"\n  Searching for '{query}'...")
+        
+        markets = search_markets(query)
+        if not markets:
+            print("  [!] No markets found. Try different keywords.")
+            return setup_market(config)
+        
+        print(f"\n  Found {len(markets)} markets:\n")
+        for i, m in enumerate(markets[:10], 1):
+            title = m.get("title", "Unknown")[:50]
+            slug = m.get("slug", "")
+            print(f"  {i}. {title}")
+            print(f"     Slug: {slug}\n")
+        
+        idx = prompt_choice("Select a market:", [m.get("title", "Unknown")[:40] for m in markets[:10]])
+        config["MARKET_SLUG"] = markets[idx].get("slug", "")
+    
+    elif choice == 2:
+        # Auto-find
+        print("\n  Searching for active, volatile markets...")
+        try:
+            resp = requests.get(
+                f"{GAMMA_API}/events",
+                params={"active": True, "closed": False, "limit": 20, "order": "volume24hr", "ascending": False},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                markets = resp.json()
+                if markets:
+                    print(f"\n  Top {len(markets[:10])} markets by volume:\n")
+                    for i, m in enumerate(markets[:10], 1):
+                        title = m.get("title", "Unknown")[:45]
+                        slug = m.get("slug", "")
+                        print(f"  {i}. {title}")
+                    
+                    idx = prompt_choice("Select a market:", [m.get("title", "Unknown")[:40] for m in markets[:10]])
+                    config["MARKET_SLUG"] = markets[idx].get("slug", "")
+        except Exception as e:
+            print(f"  [X] Error: {e}")
+            return setup_market(config)
+    
+    return config
+
+
+def setup_trading(config: dict[str, str]) -> dict[str, str]:
+    """Configure trading parameters."""
+    print_header("TRADING SETTINGS")
+    
+    # Dry run
+    print("DRY RUN mode simulates trades without using real money.")
+    print("Recommended for testing!\n")
+    
+    dry_run = prompt_yes_no("Enable DRY RUN mode?", default=True)
+    config["DRY_RUN"] = "true" if dry_run else "false"
+    
+    if not dry_run:
+        print("\n  [!] WARNING: Real money trading enabled!")
+        if not prompt_yes_no("  Are you sure?", default=False):
+            config["DRY_RUN"] = "true"
+    
+    # Trade size
+    print("\nTrade size is the USD amount per trade (minimum $1.00):")
+    size = prompt("Trade size in USD", default="1.0")
+    try:
+        size_float = float(size)
+        if size_float < 1.0:
+            print("  [!] Minimum is $1.00. Setting to 1.0")
+            size = "1.0"
+    except ValueError:
+        size = "1.0"
+    config["DEFAULT_TRADE_SIZE_USD"] = size
+    
+    return config
+
+
+def setup_strategy(config: dict[str, str]) -> dict[str, str]:
+    """Configure strategy parameters."""
+    print_header("STRATEGY SETTINGS")
+    
+    print("The Spike Sam strategy fades price spikes:")
+    print("  - When price spikes UP, we SELL (fade the pump)")
+    print("  - When price spikes DOWN, we BUY (fade the dump)\n")
+    
+    # Spike threshold
+    print("Spike threshold: minimum % move to trigger a trade")
+    threshold = prompt("Spike threshold %", default="1.0")
+    config["SPIKE_THRESHOLD_PCT"] = threshold
+    
+    return config
+
+
+def setup_risk(config: dict[str, str]) -> dict[str, str]:
+    """Configure risk management."""
+    print_header("RISK MANAGEMENT")
+    
+    print("Set exit conditions to protect your capital:\n")
+    
+    # Take profit
+    tp = prompt("Take profit % (exit when profit reaches this)", default="3.0")
+    config["TAKE_PROFIT_PCT"] = tp
+    
+    # Stop loss
+    sl = prompt("Stop loss % (exit when loss reaches this)", default="2.5")
+    config["STOP_LOSS_PCT"] = sl
+    
+    # Max hold time
+    print("\nMax hold time prevents getting stuck in positions:")
+    hold = prompt("Maximum hold time in seconds", default="120")
+    config["MAX_HOLD_SECONDS"] = hold
+    
+    # Killswitch
+    print("\nKillswitch closes positions when you stop the bot (Ctrl+C):")
+    killswitch = prompt_yes_no("Enable killswitch on shutdown?", default=True)
+    config["KILLSWITCH_ON_SHUTDOWN"] = "true" if killswitch else "false"
+    
+    return config
+
+
+def setup_advanced(config: dict[str, str]) -> dict[str, str]:
+    """Configure advanced settings."""
+    if not prompt_yes_no("\nConfigure advanced settings?", default=False):
+        # Set defaults
+        config.setdefault("HOST", "https://clob.polymarket.com")
+        config.setdefault("CHAIN_ID", "137")
+        config.setdefault("LOG_LEVEL", "INFO")
+        config.setdefault("WSS_ENABLED", "true")
+        return config
+    
+    print_header("ADVANCED SETTINGS")
+    
+    config["HOST"] = prompt("CLOB API host", default="https://clob.polymarket.com")
+    config["CHAIN_ID"] = prompt("Chain ID (137 for Polygon)", default="137")
+    config["LOG_LEVEL"] = prompt("Log level (DEBUG/INFO/WARNING/ERROR)", default="INFO")
+    config["WSS_ENABLED"] = "true" if prompt_yes_no("Enable WebSocket for real-time prices?", default=True) else "false"
+    
+    return config
+
+
+def main():
+    clear_screen()
+    print_header("POLYAGENT SETUP WIZARD")
+    
+    print("Welcome! This wizard will help you configure PolyAgent.")
+    print("Your settings will be saved to .env file.\n")
+    
+    if not prompt_yes_no("Ready to begin?", default=True):
+        print("\nSetup cancelled.")
+        return
+    
+    # Load existing config
+    config = load_existing_env()
+    
+    # Run through setup steps
+    config = setup_wallet(config)
+    config = setup_market(config)
+    config = setup_trading(config)
+    config = setup_strategy(config)
+    config = setup_risk(config)
+    config = setup_advanced(config)
+    
+    # Summary
+    print_header("CONFIGURATION SUMMARY")
+    
+    masked_key = config.get("PRIVATE_KEY", "")[:6] + "..." if config.get("PRIVATE_KEY") else "Not set"
+    print(f"  Private Key:     {masked_key}")
+    print(f"  Signature Type:  {'EOA' if config.get('SIGNATURE_TYPE') == '0' else 'Gnosis Proxy'}")
+    print(f"  Market:          {config.get('MARKET_SLUG', 'Not set')}")
+    print(f"  Dry Run:         {config.get('DRY_RUN', 'true')}")
+    print(f"  Trade Size:      ${config.get('DEFAULT_TRADE_SIZE_USD', '1.0')}")
+    print(f"  Spike Threshold: {config.get('SPIKE_THRESHOLD_PCT', '1.0')}%")
+    print(f"  Take Profit:     {config.get('TAKE_PROFIT_PCT', '3.0')}%")
+    print(f"  Stop Loss:       {config.get('STOP_LOSS_PCT', '2.5')}%")
+    print(f"  Max Hold:        {config.get('MAX_HOLD_SECONDS', '120')}s")
+    print(f"  Killswitch:      {config.get('KILLSWITCH_ON_SHUTDOWN', 'true')}")
+    
+    if prompt_yes_no("\nSave this configuration?", default=True):
+        save_env(config)
+        
+        print("\n" + "=" * 60)
+        print("  SETUP COMPLETE!")
+        print("=" * 60)
+        print("\nNext steps:")
+        print("  1. Review your .env file")
+        print("  2. Run: python scripts/check_setup.py")
+        print("  3. Start bot: python start_bot.py")
+        print("\nHappy trading!")
+    else:
+        print("\nSetup cancelled. No changes saved.")
+
+
+if __name__ == "__main__":
+    main()

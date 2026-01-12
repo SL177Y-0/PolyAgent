@@ -92,6 +92,62 @@ INFO - Total P&L: $+0.17 | Win Rate: 3/8
 
 ---
 
+## Easy Start (New Users)
+
+For new users, we provide simple command-line tools:
+
+### Unified CLI Tool
+
+```bash
+# All-in-one command tool
+python poly.py <command>
+
+# Available commands:
+python poly.py setup      # Interactive configuration wizard
+python poly.py status     # Check current position and market
+python poly.py start      # Start the trading bot
+python poly.py market <url>  # Get market info from URL
+python poly.py find       # Find tradeable markets
+python poly.py trade --buy --size 1.0   # Manual trade
+python poly.py close      # Close all positions
+python poly.py reset      # Reset position state
+```
+
+### Individual Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `python scripts/easy_setup.py` | Interactive setup wizard |
+| `python scripts/quick_start.py` | One-click launcher with checks |
+| `python scripts/get_market_from_url.py <url>` | Extract market data from Polymarket URL |
+| `python scripts/check_status.py` | Show position and P&L status |
+| `python scripts/find_tradeable_market.py` | Find markets with good orderbooks |
+
+### Example: Setup from Scratch
+
+```bash
+# 1. Run the setup wizard
+python scripts/easy_setup.py
+
+# 2. Check your configuration
+python poly.py status
+
+# 3. Start trading (dry run by default)
+python poly.py start
+```
+
+### Example: Find and Trade a Market
+
+```bash
+# Find market from Polymarket URL
+python poly.py market https://polymarket.com/event/some-market-slug
+
+# Update your .env with the slug shown, then:
+python poly.py start
+```
+
+---
+
 ## Configuration
 
 ### Complete `.env` Reference
@@ -181,6 +237,7 @@ DRY_RUN=true                      # Simulate trades (NO real money)
 ```
 PolyAgent/
 ├── start_bot.py               # Entry point - starts the trading bot
+├── poly.py                    # Unified CLI tool for all operations
 ├── requirements.txt            # Python dependencies
 ├── .env                        # User configuration (create from .env.example)
 ├── .env.example                # Configuration template
@@ -190,18 +247,20 @@ PolyAgent/
 │   ├── config.py              # Configuration loading & validation
 │   ├── clob_client.py         # Polymarket API wrapper (EOA/Proxy)
 │   ├── bot.py                 # Main bot loop & Spike Sam strategy
-│   ├── risk_manager.py        # Risk management system
-│   └── websocket_client.py    # Real-time WebSocket client
+│   ├── websocket_client.py    # Real-time WebSocket client
+│   └── deprecated/            # Unused modules (kept for reference)
 │
 ├── scripts/                    # Operational scripts
+│   ├── easy_setup.py          # Interactive setup wizard
+│   ├── quick_start.py         # One-click launcher
+│   ├── get_market_from_url.py # Extract market data from URL
+│   ├── check_status.py        # Check current positions & P&L
+│   ├── find_tradeable_market.py  # Find markets with orderbooks
 │   ├── manual_trade.py        # Execute one-off buy/sell orders
 │   ├── check_setup.py         # Verify configuration
-│   ├── check_status.py        # Check current positions
 │   ├── check_orderbook.py     # Inspect orderbook state
-│   ├── compare_prices.py      # Compare Gamma vs CLOB prices
-│   ├── pre_flight_check.py    # Quick pre-flight validation
 │   ├── sell_all_positions.py  # Emergency exit
-│   └── test_full_cycle.py     # End-to-end trade cycle test
+│   └── ...                    # Other utility scripts
 │
 ├── tests/                      # Test suite
 │   ├── test_end_to_end.py     # Integration tests
@@ -375,12 +434,15 @@ else:
 
 | Command | Purpose |
 |---------|---------|
+| `python poly.py status` | Show current position and P&L |
+| `python poly.py market <slug>` | Get market info from URL/slug |
 | `python scripts/check_setup.py` | Verify configuration |
 | `python scripts/check_status.py` | Show current positions |
 | `python scripts/check_orderbook.py` | Inspect orderbook |
 | `python scripts/manual_trade.py --buy --size 1.05` | Manual buy |
 | `python scripts/manual_trade.py --sell --size 1.05` | Manual sell |
 | `python scripts/sell_all_positions.py` | Emergency exit |
+| `python poly.py reset` | Reset position state |
 
 ### Understanding Log Output
 
