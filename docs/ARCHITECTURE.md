@@ -2,6 +2,8 @@
 
 **This document explains why we built the bot the way we did, in simple English.**
 
+**Last Updated:** January 2026 (v2.1 - Added killswitch, noob-friendly tools, thread safety)
+
 ---
 
 ## Table of Contents
@@ -10,8 +12,9 @@
 2. [Overall Architecture](#overall-architecture)
 3. [Module-by-Module Explanation](#module-by-module)
 4. [Key Design Decisions](#key-design-decisions)
-5. [Why These Technologies?](#why-these-technologies)
-6. [How Everything Fits Together](#how-everything-fits-together)
+5. [Safety Features](#safety-features)
+6. [Why These Technologies?](#why-these-technologies)
+7. [How Everything Fits Together](#how-everything-fits-together)
 
 ---
 
@@ -241,12 +244,13 @@ The bot code stays simple - it doesn't need to know about async/await.
 
 ### 5. Entry Point (`start_bot.py`)
 
-**What it does**: Starts the bot and sets up logging
+**What it does**: Starts the bot, sets up logging, and handles graceful shutdown.
 
 **Why we need it**:
 - Clean entry point for running the bot
 - Sets up per-session log files
 - Configures logging properly
+- **Killswitch**: Closes positions on Ctrl+C/SIGTERM
 
 **Key design decisions**:
 
@@ -255,12 +259,39 @@ The bot code stays simple - it doesn't need to know about async/await.
 | Per-session log files | Each run = new file = easier debugging |
 | `get_session_log_file()` | Auto-generates unique filename |
 | Configure logging first | See startup messages in log too |
+| Signal handlers (NEW) | Catch Ctrl+C, SIGTERM, SIGBREAK for clean shutdown |
+| Killswitch (NEW) | Close open positions before exit |
 
-**Why per-session logs?**
-- Old way: All sessions in one file (hard to find)
-- New way: `bot_20250110_143052.log` (timestamp = unique)
-- Easy to compare different sessions
-- Can share specific session when debugging
+**Signal handling**:
+```python
+signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
+signal.signal(signal.SIGTERM, shutdown_handler)  # kill command
+if hasattr(signal, 'SIGBREAK'):
+    signal.signal(signal.SIGBREAK, shutdown_handler)  # Windows Ctrl+Break
+```
+
+---
+
+### 6. CLI Tool (`poly.py`) (NEW in v2.1)
+
+**What it does**: Unified command-line interface for all operations.
+
+**Why we need it**:
+- Single entry point for noob users
+- Combines many scripts into one tool
+- Easier to remember commands
+
+**Available commands**:
+```bash
+python poly.py setup    # Interactive configuration wizard
+python poly.py status   # Check position and market status
+python poly.py start    # Start the trading bot
+python poly.py market   # Get market info from URL
+python poly.py find     # Find tradeable markets
+python poly.py trade    # Manual trade execution
+python poly.py close    # Close all positions
+python poly.py reset    # Reset position state
+```
 
 ---
 
@@ -578,6 +609,71 @@ Config ──────▶ Bot ──────────────▶ C
 4. [On every action]
    └─▶ logger.info()               [Write to log file]
 ```
+
+---
+
+## Safety Features
+
+### Killswitch (NEW in v2.1)
+
+**What**: Gracefully closes open positions when the bot is stopped.
+
+**How it works**:
+```
+User presses Ctrl+C (SIGINT)
+    → Signal handler catches it
+    → Checks for open position
+    → Fetches current price
+    → Executes exit order
+    → Saves state to position.json
+    → Shuts down cleanly
+```
+
+**Configuration**:
+```env
+KILLSWITCH_ON_SHUTDOWN=true  # Enable/disable
+```
+
+**Why we added it**:
+- Prevents orphaned positions when bot crashes
+- Ensures funds aren't stuck in bad trades
+- Provides peace of mind for users
+
+### Thread Safety (NEW in v2.1)
+
+**What**: Mutex lock (`_state_lock`) protects shared state.
+
+**Why we need it**:
+- WebSocket runs in a background thread
+- Main loop runs in main thread
+- Both access: `open_position`, `history`, `last_price`
+- Without locking = race conditions = bugs
+
+**How it works**:
+```python
+with self._state_lock:
+    # Only one thread can access this at a time
+    self.history.append((timestamp, price))
+    self.last_ws_price = price
+```
+
+### Initial Inventory Logic (NEW in v2.1)
+
+**What**: Bot must BUY before it can SELL.
+
+**Why**:
+- Prevents "selling air" (shorting without shares)
+- Matches real inventory-based trading
+- Polymarket requires shares to sell
+
+**How it works**:
+```python
+if side == "SELL" and not self.initial_inventory_acquired:
+    logger.warning("Cannot SELL without inventory. Waiting for BUY first.")
+    return
+```
+
+**State persistence**: The `initial_inventory_acquired` flag is saved to `position.json`.
 
 ---
 

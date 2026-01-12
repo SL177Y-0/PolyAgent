@@ -2,6 +2,31 @@
 
 **Everything You Need to Know to Set Up and Run Your Polymarket Trading Bot**
 
+**Last Updated:** January 2026 (v2.1 - Added easy setup wizard and CLI tools)
+
+---
+
+## NEW: Quick Start for Complete Beginners
+
+If you want to get started as fast as possible, use our new easy tools:
+
+```bash
+# Step 1: Run the setup wizard (interactive, guides you through everything)
+python scripts/easy_setup.py
+
+# Step 2: Check your configuration
+python poly.py status
+
+# Step 3: Start the bot
+python poly.py start
+```
+
+That's it! The setup wizard will guide you through:
+- Private key configuration
+- Market selection (with search)
+- Trade size and risk settings
+- All in a friendly Q&A format
+
 ---
 
 ## Part 1: Understanding What You're Getting Into
@@ -278,17 +303,32 @@ https://polymarket.com/event/wta-mcnally-juvan-2026-01-09
 Copy everything after /event/ and paste it as MARKET_SLUG
 ```
 
-**Method 2: Use the Bot's Tool**
+**Method 2: Use the Market URL Extractor (NEW)**
 
 ```bash
-# List all active sports events
-python scripts/poly_tools.py list-events
+# Get full market info from any Polymarket URL
+python scripts/get_market_from_url.py https://polymarket.com/event/some-market
+
+# Or just use the slug directly
+python poly.py market some-market-slug
 ```
 
 This shows you:
-- Event names
-- Liquidity (how much money is being traded)
-- Slugs you can copy
+- Market title and description
+- Token IDs for YES/NO outcomes
+- Current prices
+- Orderbook status (active or not)
+- Ready-to-copy .env settings
+
+**Method 3: Use the Bot's Search Tool**
+
+```bash
+# Find tradeable markets with good orderbooks
+python scripts/find_tradeable_market.py
+
+# Or use the CLI
+python poly.py find
+```
 
 ### Step 4.3: Choosing the Right MARKET_INDEX
 
@@ -785,8 +825,19 @@ This does a quick check of:
 
 ### Step 7.1: Starting the Bot
 
+**Option A: Direct start**
 ```bash
 python start_bot.py
+```
+
+**Option B: Quick start with checks (NEW - Recommended for beginners)**
+```bash
+python scripts/quick_start.py
+```
+
+**Option C: Using the CLI (NEW)**
+```bash
+python poly.py start
 ```
 
 **What you should see:**
@@ -838,11 +889,17 @@ INFO - Status: Price=0.8900 | Position=NONE | WSS=✓ | Spikes detected=0
 Press Ctrl+C
 ```
 
-The bot will:
-1. Stop taking new positions
-2. Close any open positions (if configured)
-3. Save your P&L data
+The bot will (with Killswitch enabled):
+1. Catch the shutdown signal
+2. **Close any open positions automatically** (NEW - Killswitch feature)
+3. Save your P&L data to position.json
 4. Exit cleanly
+
+**Killswitch Configuration:**
+```env
+KILLSWITCH_ON_SHUTDOWN=true   # Automatically close positions on shutdown
+KILLSWITCH_ON_SHUTDOWN=false  # Leave positions open (manual management)
+```
 
 ### Step 7.4: What 30 Minutes of Real Trading Looks Like
 
