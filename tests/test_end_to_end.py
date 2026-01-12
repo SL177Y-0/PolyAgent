@@ -36,16 +36,26 @@ def test_spike_and_exit(monkeypatch):
         stop_loss_pct=10.0,  # Higher SL for the test
         max_hold_seconds=9999,
         dry_run=True,
-        spike_windows_minutes=[0.1, 0.3, 0.5],
+        spike_windows_minutes=[1, 2, 5],  # Longer windows for test (60s, 120s, 300s)
     )
     bot = Bot(cfg)
     bot.client = DummyClient(prices)
     bot.token_id = "dummy"
+    bot.initial_inventory_acquired = True  # Allow SELL (bot already has inventory)
+    
+    # Reset any state loaded from file (isolate test from real position.json)
+    bot.open_position = None
+    bot.realized_pnl = 0.0
+    bot.total_trades = 0
+    bot.winning_trades = 0
+    bot.last_signal_time = None
+    bot.history.clear()
 
-    # Simulate price history over time
-    base_time = datetime.now(timezone.utc) - timedelta(seconds=60)
+    # Simulate price history over time - use recent timestamps within the windows
+    base_time = datetime.now(timezone.utc) - timedelta(seconds=40)  # Start 40s ago
+    spike_pct = 0.0  # Initialize for error message
     for i, price in enumerate(prices):
-        timestamp = base_time + timedelta(seconds=i*5)
+        timestamp = base_time + timedelta(seconds=i*5)  # 5s apart, ending at now
         bot.history.append((timestamp, price))
 
         if bot.open_position:

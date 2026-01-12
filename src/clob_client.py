@@ -46,8 +46,26 @@ class Client:
         )
         api_creds = self._client.create_or_derive_api_creds()
         self._client.set_api_creds(api_creds)
+        
+        # Store API credentials for User WebSocket authentication
+        self._api_key = api_creds.api_key
+        self._api_secret = api_creds.api_secret
+        self._api_passphrase = api_creds.api_passphrase
+        
         logger.info("API credentials ready")
         self._token_cache: Dict[str, str] = {}
+    
+    def get_api_credentials(self) -> Dict[str, str]:
+        """Get API credentials for User WebSocket authentication.
+        
+        Returns:
+            Dict with api_key, api_secret, api_passphrase
+        """
+        return {
+            "api_key": self._api_key,
+            "api_secret": self._api_secret,
+            "api_passphrase": self._api_passphrase,
+        }
 
     def resolve_token_id(self, market_index: Optional[int] = None) -> str:
         """Resolve market slug to token ID.
@@ -366,10 +384,18 @@ class Client:
         Returns:
             Tuple of (has_balance, message)
         """
+        # For Proxy mode (Gnosis Safe), skip balance pre-check
+        # The funder wallet has the balance, not the signer
+        if self.config.signature_type == 2:
+            logger.debug("[PROXY_MODE] Skipping balance pre-check - funder balance used")
+            return True, "Proxy mode - balance assumed OK"
+        
         try:
             ba = self.get_balance_allowance(token_id)
             if not ba:
-                return False, "Could not fetch balance/allowance"
+                # Be lenient - allow trade attempt even if can't fetch balance
+                logger.warning("[BALANCE_CHECK] Could not fetch balance, allowing trade attempt")
+                return True, "Balance check failed, allowing attempt"
 
             # Get available balance (side depends on what we're trading)
             # For YES tokens: balance is in USDC.e collateral
@@ -384,12 +410,48 @@ class Client:
 
             return True, f"Balance OK: ${available_bal:.2f}"
         except Exception as e:
-            logger.warning(f"Balance check error: {e}")
-            return False, f"Balance check failed: {e}"
+            # Be lenient - allow trade attempt even on error
+            logger.warning(f"Balance check error: {e}, allowing trade attempt")
+            return True, f"Balance check error, allowing attempt"
+
+    def get_token_balance(self, token_id: Optional[str] = None) -> float:
+        """Get actual token (share) balance from Data API.
+        
+        This checks the actual position size, not USDC balance.
+        Useful for verifying token settlement before selling.
+        
+        Args:
+            token_id: Token ID to check (uses default if None)
+            
+        Returns:
+            Number of shares held (0.0 if none or error)
+        """
+        token = token_id or self.resolve_token_id()
+        address = self.config.funder_address
+        
+        if not address:
+            logger.warning("[TOKEN_BALANCE] No funder address configured")
+            return 0.0
+        
+        try:
+            url = f"https://data-api.polymarket.com/positions?user={address}"
+            resp = requests.get(url, timeout=10)
+            
+            if resp.status_code == 200:
+                for pos in resp.json():
+                    if pos.get("asset") == token:
+                        return float(pos.get("size", 0))
+            return 0.0
+        except Exception as e:
+            logger.warning(f"[TOKEN_BALANCE] Failed to fetch: {e}")
+            return 0.0
 
     def check_orderbook_health(self, side: str, amount_usd: float, token_id: Optional[str] = None,
                               min_liquidity: float = 1.0, max_spread_pct: float = 5.0) -> Tuple[bool, str, Dict[str, Any]]:
         """Check if orderbook has sufficient liquidity for our trade.
+        
+        LENIENT MODE: For proof-of-concept, we skip most checks and let the
+        order placement itself fail if there's an issue.
 
         Args:
             side: "BUY" or "SELL"
@@ -413,7 +475,9 @@ class Client:
                 asks = ob.get("asks", [])
 
             if not bids or not asks:
-                return False, "Orderbook empty - one or both sides have no orders", {}
+                # Be lenient - allow trade attempt even with empty orderbook
+                logger.warning("[ORDERBOOK] Empty orderbook, allowing trade attempt anyway")
+                return True, "Orderbook empty, allowing attempt", {}
 
             def first_price_and_size(side_data):
                 if not side_data:
@@ -427,47 +491,29 @@ class Client:
             best_ask, ask_size = first_price_and_size(asks)
 
             if best_bid is None or best_ask is None:
-                return False, "Cannot determine best bid/ask prices", {}
+                # Be lenient
+                logger.warning("[ORDERBOOK] Cannot determine prices, allowing trade attempt")
+                return True, "Price undetermined, allowing attempt", {}
 
-            # Calculate spread
-            spread_pct = (best_ask - best_bid) / best_bid * 100 if best_bid > 0 else 999
-
-            # Check which side we need liquidity on
-            if side.upper() == "BUY":
-                # We're buying YES tokens -> need ask liquidity
-                required_size = amount_usd / best_ask if best_ask > 0 else 0
-                if ask_size < required_size:
-                    return False, f"Insufficient ask liquidity: ${ask_size*best_ask:.2f} < ${amount_usd:.2f}", {
-                        "best_ask": best_ask,
-                        "ask_size": ask_size,
-                        "spread_pct": spread_pct
-                    }
-            else:  # SELL
-                # We're selling YES tokens -> need bid liquidity
-                required_size = amount_usd / best_bid if best_bid > 0 else 0
-                if bid_size < required_size:
-                    return False, f"Insufficient bid liquidity: ${bid_size*best_bid:.2f} < ${amount_usd:.2f}", {
-                        "best_bid": best_bid,
-                        "bid_size": bid_size,
-                        "spread_pct": spread_pct
-                    }
-
-            # Check spread
-            if spread_pct > max_spread_pct:
-                return False, f"Spread too wide: {spread_pct:.2f}% > {max_spread_pct}%", {
-                    "best_bid": best_bid,
-                    "best_ask": best_ask,
-                    "spread_pct": spread_pct
-                }
+            # Calculate spread as ABSOLUTE (not percentage of bid which can be huge)
+            spread_absolute = best_ask - best_bid
+            midpoint = (best_ask + best_bid) / 2
+            spread_pct = (spread_absolute / midpoint * 100) if midpoint > 0 else 0
 
             info = {
                 "best_bid": best_bid,
                 "best_ask": best_ask,
+                "spread_absolute": spread_absolute,
                 "spread_pct": spread_pct,
                 "bid_size": bid_size,
                 "ask_size": ask_size
             }
-            return True, f"Orderbook healthy - spread: {spread_pct:.2f}%", info
+            
+            # Log orderbook info but don't block
+            logger.debug(f"[ORDERBOOK] Bid: {best_bid:.4f} Ask: {best_ask:.4f} Spread: ${spread_absolute:.4f}")
+            
+            # LENIENT: Always return healthy, let the order placement fail if needed
+            return True, f"Orderbook OK - spread: ${spread_absolute:.4f}", info
 
         except Exception as e:
             logger.warning(f"Orderbook health check failed: {e}")

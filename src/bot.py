@@ -29,6 +29,13 @@ except ImportError as e:
     logging.getLogger(__name__).warning(f"WebSocket import failed: {e}")
     WEBSOCKET_AVAILABLE = False
 
+try:
+    from .user_websocket_client import UserWebSocketSyncWrapper
+    USER_WEBSOCKET_AVAILABLE = True
+except ImportError as e:
+    logging.getLogger(__name__).warning(f"User WebSocket import failed: {e}")
+    USER_WEBSOCKET_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +45,9 @@ class Position:
     entry_price: float
     entry_time: datetime
     amount_usd: float
+    entry_order_id: Optional[str] = None  # Order ID for settlement tracking
+    pending_settlement: bool = True       # True until settlement confirmed
+    expected_shares: float = 0.0          # Expected shares from trade
 
     @property
     def position_type(self) -> str:
@@ -75,6 +85,9 @@ class Position:
             "entry_time": self.entry_time.isoformat(),
             "amount_usd": self.amount_usd,
             "age_seconds": self.age_seconds,
+            "entry_order_id": self.entry_order_id,
+            "pending_settlement": self.pending_settlement,
+            "expected_shares": self.expected_shares,
         }
 
 
@@ -116,6 +129,17 @@ class Bot:
 
         # Settlement delay (seconds to wait after exit before new entry)
         self.settlement_delay_seconds = 2.0
+
+        # Initial inventory flag - must BUY first before we can SELL
+        self.initial_inventory_acquired = False
+
+        # Thread safety lock for shared state (position, history) between WebSocket thread and main loop
+        self._state_lock = threading.Lock()
+
+        # User WebSocket for settlement confirmation (soft 2s timeout fallback)
+        self.user_ws_client: Optional[UserWebSocketSyncWrapper] = None
+        self.use_user_websocket = USER_WEBSOCKET_AVAILABLE
+        self.settlement_timeout_seconds = 2.0  # Soft timeout for settlement confirmation
 
         # Persistence
         self.state_file = Path("data/position.json")
@@ -238,7 +262,17 @@ class Bot:
         if in_cooldown:
             return {"action": "ignore", "size_usd": 0, "reason": "cooldown"}
 
-        # Check volatility filter
+        # PRIORITY: Initial inventory acquisition (must BUY first before we can SELL)
+        # This ensures we have tokens to sell when price spikes UP
+        if not self.initial_inventory_acquired:
+            logger.info("[STRATEGY] Session start - acquiring initial inventory with BUY")
+            return {
+                "action": "buy",
+                "size_usd": self.cfg.default_trade_size_usd,
+                "reason": "initial_inventory_acquisition"
+            }
+
+        # Check volatility filter (only after initial inventory)
         if stats.get("volatility_filtered"):
             return {
                 "action": "ignore",
@@ -299,6 +333,8 @@ class Bot:
                 "realized_pnl": self.realized_pnl,
                 "total_trades": self.total_trades,
                 "winning_trades": self.winning_trades,
+                "initial_inventory_acquired": self.initial_inventory_acquired,
+                "token_id": self.token_id,
             }
             self.state_file.write_text(json.dumps(data, default=str))
         except Exception:
@@ -308,6 +344,13 @@ class Bot:
         try:
             if self.state_file.exists():
                 data = json.loads(self.state_file.read_text())
+                
+                # Verify token_id matches (prevent loading state from different market)
+                saved_token_id = data.get("token_id")
+                if saved_token_id and self.token_id and saved_token_id != self.token_id:
+                    logger.warning(f"[STATE] Ignoring saved state from different market (saved={saved_token_id[:8]}..., current={self.token_id[:8]}...)")
+                    return
+                
                 pos = data.get("open_position")
                 if pos:
                     self.open_position = Position(
@@ -319,6 +362,10 @@ class Bot:
                 self.realized_pnl = float(data.get("realized_pnl", 0.0))
                 self.total_trades = int(data.get("total_trades", 0))
                 self.winning_trades = int(data.get("winning_trades", 0))
+                self.initial_inventory_acquired = bool(data.get("initial_inventory_acquired", False))
+                
+                if self.initial_inventory_acquired:
+                    logger.info("[STATE] Restored initial_inventory_acquired=True from saved state")
         except Exception:
             pass
 
@@ -327,6 +374,14 @@ class Bot:
 
         If order placement fails, the position is NOT opened (preventing tracking issues).
         """
+        # Runtime validation of trade size
+        if self.cfg.default_trade_size_usd < self.cfg.min_trade_usd:
+            logger.warning(f"[ENTRY_SKIPPED] Trade size ${self.cfg.default_trade_size_usd:.2f} < min ${self.cfg.min_trade_usd:.2f}")
+            return
+        if self.cfg.default_trade_size_usd > self.cfg.max_trade_usd:
+            logger.warning(f"[ENTRY_SKIPPED] Trade size ${self.cfg.default_trade_size_usd:.2f} > max ${self.cfg.max_trade_usd:.2f}")
+            return
+
         # First, try to place the order
         logger.info(f"[ENTRY] Attempting {side.upper()} ${self.cfg.default_trade_size_usd:.2f} at {price:.4f} ({reason})")
 
@@ -346,14 +401,38 @@ class Bot:
                 return
 
             # Order succeeded - now track the position
+            order_id = result.response.get("orderID") or result.response.get("order_id") or ""
+            expected_shares = self.cfg.default_trade_size_usd / price if price > 0 else 0
+            
             self.open_position = Position(
                 side=side.upper(),
                 entry_price=price,
                 entry_time=datetime.now(timezone.utc),
                 amount_usd=self.cfg.default_trade_size_usd,
+                entry_order_id=order_id,
+                pending_settlement=True,  # Mark as pending until confirmed
+                expected_shares=expected_shares,
             )
             self.last_signal_time = datetime.now(timezone.utc)
-            logger.info(f"[POSITION_OPENED] {side.upper()} ${self.cfg.default_trade_size_usd:.2f} at {price:.4f}")
+            
+            # Register for settlement tracking via User WebSocket
+            if self.user_ws_client and order_id:
+                self.user_ws_client.register_pending_order(order_id)
+            
+            # Start fallback timer (soft 2s timeout)
+            if order_id:
+                self._start_settlement_fallback_timer(order_id)
+            else:
+                # No order ID, mark as settled immediately
+                self.open_position.pending_settlement = False
+            
+            # Mark initial inventory as acquired after first successful BUY
+            if side.upper() == "BUY" and not self.initial_inventory_acquired:
+                self.initial_inventory_acquired = True
+                logger.info("[INVENTORY] Initial inventory acquired - SELL on spike UP now enabled")
+                self._save_state()  # Persist immediately
+            
+            logger.info(f"[POSITION_OPENED] {side.upper()} ${self.cfg.default_trade_size_usd:.2f} at {price:.4f} (order={order_id[:16]}...)" if order_id else f"[POSITION_OPENED] {side.upper()} ${self.cfg.default_trade_size_usd:.2f} at {price:.4f}")
 
         except Exception as e:
             err_str = str(e).lower()
@@ -414,51 +493,75 @@ class Bot:
         self.last_signal_time = datetime.now(timezone.utc)
         self._save_state()
 
+    def _on_settlement_confirmed(self, order_id: str, status: str):
+        """Called when User WebSocket confirms trade settlement."""
+        with self._state_lock:
+            if self.open_position and self.open_position.entry_order_id == order_id:
+                if status == "CONFIRMED":
+                    self.open_position.pending_settlement = False
+                    logger.info(f"[SETTLEMENT] Order {order_id[:16]}... CONFIRMED via WebSocket")
+
+    def _start_settlement_fallback_timer(self, order_id: str):
+        """Start a background timer to mark settlement complete after timeout.
+        
+        This is a soft fallback - if WebSocket confirms earlier, this does nothing.
+        """
+        def fallback():
+            time.sleep(self.settlement_timeout_seconds)
+            with self._state_lock:
+                if self.open_position and self.open_position.entry_order_id == order_id:
+                    if self.open_position.pending_settlement:
+                        self.open_position.pending_settlement = False
+                        logger.info(f"[SETTLEMENT] Order {order_id[:16]}... assumed settled (2s timeout)")
+        
+        threading.Thread(target=fallback, daemon=True).start()
+
     def _on_websocket_trade(self, price: float):
-        """Handle incoming trade from WebSocket."""
-        self.prices_seen += 1
-        now = datetime.now(timezone.utc)
-        self.last_price = price
-        self.last_price_time = now
+        """Handle incoming trade from WebSocket (runs in WebSocket thread)."""
+        with self._state_lock:
+            self.prices_seen += 1
+            now = datetime.now(timezone.utc)
+            self.last_price = price
+            self.last_price_time = now
 
-        # Add to history
-        self.history.append((now, price))
+            # Add to history
+            self.history.append((now, price))
 
-        # Compute multi-window spike
-        spike_pct, stats = self._compute_spike_multi_window(price)
+            # Compute multi-window spike
+            spike_pct, stats = self._compute_spike_multi_window(price)
 
-        # Log periodically
-        if self.prices_seen % 100 == 0:
-            logger.info(
-                f"[WSS] {price:.4f} | Spike: {spike_pct:+.2f}% | "
-                f"History: {len(self.history)} | "
-                f"Vol CV: {stats.get('volatility_cv', 0):.2f}%"
-            )
+            # Log periodically
+            if self.prices_seen % 100 == 0:
+                logger.info(
+                    f"[WSS] {price:.4f} | Spike: {spike_pct:+.2f}% | "
+                    f"History: {len(self.history)} | "
+                    f"Vol CV: {stats.get('volatility_cv', 0):.2f}%"
+                )
 
-        # Risk exit check first
-        if self.open_position:
-            exit_reason = self._risk_exit(price)
-            if exit_reason:
-                self._exit(exit_reason, price)
-                return
+            # Risk exit check first
+            if self.open_position:
+                exit_reason = self._risk_exit(price)
+                if exit_reason:
+                    self._exit(exit_reason, price)
+                    return
 
-        # Entry logic
-        if self.open_position is None and self._enough_cooldown():
-            threshold = self.cfg.spike_threshold_pct
-            if abs(spike_pct) >= threshold:
-                self.spikes_detected += 1
-                decision = self.decide_action(spike_pct, price, stats)
+            # Entry logic
+            if self.open_position is None and self._enough_cooldown():
+                threshold = self.cfg.spike_threshold_pct
+                if abs(spike_pct) >= threshold:
+                    self.spikes_detected += 1
+                    decision = self.decide_action(spike_pct, price, stats)
 
-                if decision["action"] != "ignore":
-                    action = decision["action"].upper()
-                    size = decision["size_usd"]
-                    reason = decision["reason"]
-                    logger.info(
-                        f"[SPIKE_#{self.spikes_detected}] {spike_pct:+.2f}% "
-                        f"-> {action} ${size:.2f} "
-                        f"({reason}, price={price:.4f})"
-                    )
-                    self._enter(action, price, reason)
+                    if decision["action"] != "ignore":
+                        action = decision["action"].upper()
+                        size = decision["size_usd"]
+                        reason = decision["reason"]
+                        logger.info(
+                            f"[SPIKE_#{self.spikes_detected}] {spike_pct:+.2f}% "
+                            f"-> {action} ${size:.2f} "
+                            f"({reason}, price={price:.4f})"
+                        )
+                        self._enter(action, price, reason)
 
     def run(self):
         # Lazy client init if not provided
@@ -492,6 +595,23 @@ class Bot:
             )
             self.ws_client.start()
 
+        # Initialize User WebSocket for settlement confirmation
+        if self.use_user_websocket:
+            try:
+                api_creds = self.client.get_api_credentials()
+                self.user_ws_client = UserWebSocketSyncWrapper(
+                    api_key=api_creds["api_key"],
+                    api_secret=api_creds["api_secret"],
+                    api_passphrase=api_creds["api_passphrase"],
+                    on_trade_confirmed=self._on_settlement_confirmed,
+                )
+                self.user_ws_client.start()
+                logger.info("[USER_WSS] Settlement tracking enabled (soft 2s timeout)")
+            except Exception as e:
+                logger.warning(f"[USER_WSS] Failed to initialize: {e}, using fallback mode")
+                self.user_ws_client = None
+
+        if self.use_websocket:
             # Fetch initial price from REST to populate history
             logger.info("[REST] Fetching initial price from API...")
             initial_price = self._get_price_rest()
@@ -515,31 +635,33 @@ class Bot:
                     if now - last_rest_fetch >= rest_fetch_interval:
                         rest_price = self._get_price_rest()
                         if rest_price:
-                            # Only log if price changed
-                            if rest_price != self.last_price:
-                                logger.info(f"[REST] Price: {rest_price:.4f}")
-                            self.history.append((datetime.now(timezone.utc), rest_price))
-                            self.last_price = rest_price
+                            with self._state_lock:
+                                # Only log if price changed
+                                if rest_price != self.last_price:
+                                    logger.info(f"[REST] Price: {rest_price:.4f}")
+                                self.history.append((datetime.now(timezone.utc), rest_price))
+                                self.last_price = rest_price
                         last_rest_fetch = now
 
                     # Periodic status and risk check
-                    if self.open_position:
-                        price = self.last_price or self.ws_client.get_polymarket_price()
-                        if price:
-                            # Check risk exits
-                            exit_reason = self._risk_exit(price)
-                            if exit_reason:
-                                self._exit(exit_reason, price)
+                    with self._state_lock:
+                        if self.open_position:
+                            price = self.last_price or self.ws_client.get_polymarket_price()
+                            if price:
+                                # Check risk exits
+                                exit_reason = self._risk_exit(price)
+                                if exit_reason:
+                                    self._exit(exit_reason, price)
 
-                            # Show position status every 30 iterations
-                            if iteration % 30 == 0:
-                                pnl = self.open_position.calculate_pnl(price)
-                                logger.info(
-                                    f"   Position: {self.open_position.position_type} | "
-                                    f"Entry: {self.open_position.entry_price:.4f} | "
-                                    f"P&L: {pnl['pnl_pct']:+.2f}% | "
-                                    f"Held: {self.open_position.age_minutes:.1f}min"
-                                )
+                                # Show position status every 30 iterations
+                                if iteration % 30 == 0 and self.open_position:
+                                    pnl = self.open_position.calculate_pnl(price)
+                                    logger.info(
+                                        f"   Position: {self.open_position.position_type} | "
+                                        f"Entry: {self.open_position.entry_price:.4f} | "
+                                        f"P&L: {pnl['pnl_pct']:+.2f}% | "
+                                        f"Held: {self.open_position.age_minutes:.1f}min"
+                                    )
 
                     # Connection status
                     if iteration % 60 == 0:
