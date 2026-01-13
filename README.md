@@ -1,540 +1,734 @@
 # PolyAgent - Polymarket Trading Bot
 
-A production-ready, modular trading bot for Polymarket prediction markets implementing the **Spike Sam** fade strategy with **real-time WebSocket spike detection**, multi-window analysis, dual signature modes (EOA/Proxy), comprehensive risk controls, and P&L tracking.
+<div align="center">
+
+![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.10+-green.svg)
+![Next.js](https://img.shields.io/badge/Next.js-16.0-black.svg)
+![License](https://img.shields.io/badge/license-MIT-purple.svg)
+
+**A production-ready, modular trading bot for Polymarket prediction markets with a modern React dashboard and real-time WebSocket updates.**
+
+</div>
+
+---
+
+##  Quick Start
+
+```bash
+# 1. Clone and setup Python environment
+cd PolyAgent
+pip install -r requirements.txt
+
+# 2. Start the backend API server
+python -m src.api_server
+
+# 3. In a new terminal, start the frontend dashboard
+cd frontend
+npm install
+npm run dev
+
+# 4. Open http://localhost:3000 and create your first bot!
+```
 
 ---
 
 ## Table of Contents
 
-1. [Features](#features)
-2. [Quick Start](#quick-start)
-3. [Configuration](#configuration)
-4. [Project Structure](#project-structure)
-5. [How It Works](#how-it-works)
-6. [Operations Guide](#operations-guide)
-7. [Troubleshooting](#troubleshooting)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Web Dashboard](#-web-dashboard)
+- [Configuration](#-configuration)
+- [Trading Strategies](#-trading-strategies)
+- [API Reference](#-api-reference)
+- [Scripts & Utilities](#-scripts--utilities)
+- [Testing](#-testing)
+- [Operations Guide](#-operations-guide)
+- [Troubleshooting](#-troubleshooting)
+- [Security](#-security)
 
 ---
 
-## Features
+##  Features
+
+### Trading Engine
 
 | Feature | Description |
 |---------|-------------|
-| **Real-Time WebSocket** | ~1 second spike detection via Polymarket WebSocket API |
-| **Multi-Window Detection** | Analyzes spikes over 10/30/60 minute windows |
-| **Volatility Filtering** | Reduces false signals using coefficient of variation |
+| **Real-Time WebSocket** | Sub-second price updates via Polymarket WebSocket API (`wss://ws-subscriptions-clob.polymarket.com/ws/market`) |
+| **Multi-Window Spike Detection** | Analyzes price spikes over configurable 10/30/60 minute windows |
+| **Volatility Filtering** | Reduces false signals using coefficient of variation analysis |
 | **Spike Sam Strategy** | Fade spikes - BUY on downward spikes, SELL on upward spikes |
-| **Intelligent Pre-Trade Validation** | Balance checks, orderbook health, smart pricing before orders |
-| **Reduced Order Failures** | Settlement delay, smart retry logic, early exit on permanent errors |
+| **Train of Trade** | Sequential target-based trading with automatic rebuy after sells |
 | **Dual Signature Modes** | Support for EOA (SIGNATURE_TYPE=0) and Gnosis Proxy (SIGNATURE_TYPE=2) |
 | **Risk Controls** | Take Profit, Stop Loss, Max Hold Time, Cooldown, Trade Size Limits |
-| **Real Trading** | Live order execution on Polymarket CLOB with full order tracking |
 | **P&L Tracking** | Realized P&L with win rate statistics, persisted to disk |
-| **State Persistence** | Crash recovery via `data/position.json` |
-| **Per-Session Logs** | Unique log file for each bot run (e.g., `bot_20250110_143052.log`) |
-| **Clean Log Format** | Professional [TAG] format (no emojis) for easy parsing |
-| **Hybrid Pricing** | WebSocket primary + REST fallback for reliability |
+| **State Persistence** | Crash recovery via `data/position.json` and `data/bots/*.json` |
+| **Settlement Verification** | Optional User WebSocket for real-time order status confirmation |
+| **Polymarket Pricing Logic** | Uses official pricing: midpoint if spread ≤ $0.10, last trade price otherwise |
+
+### Web Dashboard
+
+| Feature | Description |
+|---------|-------------|
+| **Multi-Bot Management** | Create, start, stop, delete, and monitor multiple independent bots |
+| **Real-Time Updates** | WebSocket-powered live price, position, activity, and target updates |
+| **Interactive Price Chart** | Recharts-based chart with target lines, entry/exit markers, and live updates |
+| **Position Tracking** | Live P&L, entry/exit prices, hold time, TP/SL visualization |
+| **Activity Feed** | Filterable real-time feed of spikes, orders, fills, P&L, and system events |
+| **Settings Panel** | Global settings, killswitch, slippage, liquidity requirements |
+| **Market Metrics** | Spread, liquidity depth, bid/ask visualization |
+| **Trading Profiles** | Pre-configured profiles: Normal, Live, Edge, Ultra-Conservative |
+| **Dark/Light Themes** | Modern UI with theme toggle support |
+| **Responsive Design** | Works on desktop and tablet viewports |
 
 ---
 
-## Quick Start
+## Architecture
 
-### 1. Install Dependencies
+PolyAgent uses a **fully decoupled architecture** where the backend API server and frontend dashboard are independent.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              PolyAgent System                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─── Frontend (Next.js 16) ───────────────────────────────────────────┐   │
+│  │                                                                      │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │   │
+│  │  │   Bot       │  │   Price     │  │  Activity   │  │  Settings  │  │   │
+│  │  │  Manager    │  │   Chart     │  │    Feed     │  │   Panel    │  │   │
+│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └─────┬──────┘  │   │
+│  │         │                │                │               │         │   │
+│  │         └────────────────┴────────────────┴───────────────┘         │   │
+│  │                                   │                                  │   │
+│  │                    ┌──────────────┴──────────────┐                  │   │
+│  │                    │    BotStateContext (React)   │                  │   │
+│  │                    │    WebSocket Connection      │                  │   │
+│  │                    └──────────────┬──────────────┘                  │   │
+│  └───────────────────────────────────┼──────────────────────────────────┘   │
+│                                      │                                      │
+│                           WebSocket (ws://localhost:8000)                   │
+│                           REST API (http://localhost:8000)                  │
+│                                      │                                      │
+│  ┌─── Backend (FastAPI + Python) ────┼──────────────────────────────────┐   │
+│  │                                   │                                   │   │
+│  │                    ┌──────────────┴──────────────┐                   │   │
+│  │                    │     API Server (FastAPI)    │                   │   │
+│  │                    │     - REST Endpoints        │                   │   │
+│  │                    │     - WebSocket Broadcast   │                   │   │
+│  │                    │     - CORS Handling         │                   │   │
+│  │                    └──────────────┬──────────────┘                   │   │
+│  │                                   │                                   │   │
+│  │         ┌─────────────────────────┼─────────────────────────┐        │   │
+│  │         │                         │                         │        │   │
+│  │  ┌──────┴──────┐          ┌───────┴───────┐         ┌───────┴──────┐ │   │
+│  │  │ BotSession  │          │  BotSession   │         │  BotSession  │ │   │
+│  │  │   (Bot 1)   │          │    (Bot 2)    │         │    (Bot N)   │ │   │
+│  │  │  ┌───────┐  │          │  ┌───────┐    │         │  ┌───────┐   │ │   │
+│  │  │  │ Bot   │  │          │  │ Bot   │    │         │  │ Bot   │   │ │   │
+│  │  │  │Engine │  │          │  │Engine │    │         │  │Engine │   │ │   │
+│  │  │  └───┬───┘  │          │  └───┬───┘    │         │  └───┬───┘   │ │   │
+│  │  │      │      │          │      │        │         │      │       │ │   │
+│  │  │  ┌───┴───┐  │          │  ┌───┴───┐    │         │  ┌───┴───┐   │ │   │
+│  │  │  │ CLOB  │  │          │  │ CLOB  │    │         │  │ CLOB  │   │ │   │
+│  │  │  │Client │  │          │  │Client │    │         │  │Client │   │ │   │
+│  │  │  └───────┘  │          │  └───────┘    │         │  └───────┘   │ │   │
+│  │  └─────────────┘          └───────────────┘         └──────────────┘ │   │
+│  │                                                                       │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                                      │                                      │
+│                           Polymarket APIs (External)                        │
+│                                      │                                      │
+│       ┌──────────────────────────────┼──────────────────────────────┐       │
+│       │                              │                              │       │
+│  ┌────┴─────┐              ┌─────────┴─────────┐            ┌───────┴─────┐ │
+│  │ CLOB API │              │ WebSocket Market  │            │  Gamma API  │ │
+│  │  (REST)  │              │   Price Updates   │            │  (Markets)  │ │
+│  └──────────┘              └───────────────────┘            └─────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Core Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **API Server** | `src/api_server.py` | FastAPI server exposing REST + WebSocket endpoints |
+| **Bot Session** | `src/bot_session.py` | Isolated bot instance with own config, wallet, market |
+| **Bot Engine** | `src/bot.py` | Core trading logic, spike detection, strategy execution |
+| **CLOB Client** | `src/clob_client.py` | Polymarket py-clob-client wrapper with helpers |
+| **Config** | `src/config.py` | Typed configuration with validation and trading profiles |
+| **WebSocket Client** | `src/websocket_client.py` | Real-time market data from Polymarket |
+| **User WebSocket** | `src/user_websocket_client.py` | Authenticated user channel for order status |
+| **Crypto** | `src/crypto.py` | Fernet encryption for sensitive data (private keys) |
+| **Multi-Bot Manager** | `src/multi_bot_manager.py` | Legacy multi-bot management (deprecated) |
+| **Train Bot** | `src/train_bot.py` | Train-of-trade strategy implementation |
+
+### Frontend Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Main Page** | `frontend/app/page.tsx` | Dashboard entry point |
+| **BotStateContext** | `frontend/contexts/bot-state-context.tsx` | Global state management with WebSocket |
+| **Bot Manager Panel** | `frontend/components/panels/bot-manager-panel.tsx` | Bot CRUD, configuration, and controls |
+| **Price Chart** | `frontend/components/panels/price-chart.tsx` | Interactive Recharts price chart |
+| **Activity Feed** | `frontend/components/panels/activity-feed.tsx` | Real-time activity log |
+| **Position Card** | `frontend/components/panels/position-card.tsx` | Current position details |
+| **Settings Panel** | `frontend/components/settings-panel.tsx` | Global settings management |
+
+---
+
+##  Installation
+
+### Prerequisites
+
+- **Python 3.10+** with pip
+- **Node.js 18+** with npm
+- **Polygon Wallet** with USDC.e and small MATIC for gas
+- **Polymarket Account** (optional: generate API keys for User WebSocket)
+
+### Backend Setup
 
 ```bash
+# Navigate to project root
+cd PolyAgent
+
+# Create virtual environment (recommended)
 python -m venv venv
-# Windows: venv\Scripts\activate
-# macOS/Linux: source venv/bin/activate
+venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Verify installation
+python scripts/check_setup.py
 ```
 
-### 2. Configure `.env`
+### Frontend Setup
 
 ```bash
-cp .env.example .env
-# Edit .env with your values
+cd frontend
+
+# Install dependencies
+npm install
+
+# Create local environment (optional, for custom API URL)
+cp .env.local.example .env.local
 ```
 
-**Minimum required settings:**
-```env
-PRIVATE_KEY=<64-hex-without-0x>
-SIGNATURE_TYPE=0   # 0=EOA, 2=Proxy
-MARKET_SLUG=wta-mcnally-juvan-2026-01-09
-MARKET_INDEX=0     # Which market within the event
-DRY_RUN=true       # Start with simulation!
-```
+### Required Python Packages
 
-### 3. Run the Bot
-
-```bash
-python start_bot.py
 ```
-
-**Example Output:**
-```
-INFO - Starting Polymarket Spike Sam Bot
-INFO - Session log: logs/bot_20250110_143052.log
-INFO - WebSocket ENABLED - Real-time spike detection (~1 second)
-INFO - WebSocket connected!
-INFO - Subscribed to market for token 65825053959363891562...
-INFO - Initial price: 0.8150
-INFO - [TRADE] 0.8400 BUY size=14
-INFO - [SPIKE_#1] +4.35% -> SELL $1.00 (spike_up_4.35%_window_600s, price=0.8400)
-INFO - [BALANCE_OK] $10.50 available
-INFO - [ORDERBOOK_HEALTHY] Bid liquidity: $15.20, Spread: 0.8%
-INFO - [ENTRY] SELL $1.00 at 0.8400
-INFO - [POSITION_OPENED] SELL $1.00 at 0.8400
-INFO - [EXIT_TAKE_PROFIT] +4.17% >= 0.5%: BUY $1.00 at 0.8050
-INFO - [ORDER_FILLED] ID=48239104719283...
-INFO - [POSITION_CLOSED] P&L: $+0.04 (+4.17%) | Hold: 0.3min
-INFO - Total P&L: $+0.17 | Win Rate: 3/8
+py-clob-client>=0.18.0   # Polymarket SDK
+fastapi>=0.115.0         # API framework
+uvicorn>=0.34.0          # ASGI server
+websockets>=13.0         # WebSocket client
+cryptography>=44.0       # Encryption
+python-dotenv>=1.0.0     # Environment variables
+pytest>=8.3.0            # Testing
 ```
 
 ---
 
-## Easy Start (New Users)
+##  Web Dashboard
 
-For new users, we provide simple command-line tools:
-
-### Unified CLI Tool
+### Starting the Dashboard
 
 ```bash
-# All-in-one command tool
-python poly.py <command>
+# Terminal 1: Start backend API (port 8000)
+python -m src.api_server
 
-# Available commands:
-python poly.py setup      # Interactive configuration wizard
-python poly.py status     # Check current position and market
-python poly.py start      # Start the trading bot
-python poly.py market <url>  # Get market info from URL
-python poly.py find       # Find tradeable markets
-python poly.py trade --buy --size 1.0   # Manual trade
-python poly.py close      # Close all positions
-python poly.py reset      # Reset position state
+# Terminal 2: Start frontend (port 3000)
+cd frontend && npm run dev
+
+# Open http://localhost:3000
 ```
 
-### Individual Scripts
+### Dashboard Features
 
-| Script | Purpose |
-|--------|---------|
-| `python scripts/easy_setup.py` | Interactive setup wizard |
-| `python scripts/quick_start.py` | One-click launcher with checks |
-| `python scripts/get_market_from_url.py <url>` | Extract market data from Polymarket URL |
-| `python scripts/check_status.py` | Show position and P&L status |
-| `python scripts/find_tradeable_market.py` | Find markets with good orderbooks |
+#### Bot Manager Panel
+- **Create Bot**: Configure wallet, market, strategy, and risk parameters
+- **Trading Profiles**: Choose from Normal, Live, Edge, or Ultra-Conservative
+- **Start/Stop/Pause**: Control individual bot instances
+- **Delete**: Remove bot and its configuration
 
-### Example: Setup from Scratch
+#### Price Chart
+- **Live Price Line**: Real-time price with color-coded movements
+- **Target Lines**: Buy/Sell targets for Train of Trade strategy
+- **Entry Markers**: Entry price shown with horizontal line
+- **Trade Markers**: Visual dots for executed trades
+- **Timeframe Selection**: 1H, 4H, 1D views
 
-```bash
-# 1. Run the setup wizard
-python scripts/easy_setup.py
+#### Position Card
+- **Entry Price**: Price at which position was opened
+- **Current P&L**: Unrealized profit/loss in % and USD
+- **Hold Time**: Time since position opened
+- **TP/SL Progress**: Visual progress bars to targets
 
-# 2. Check your configuration
-python poly.py status
+#### Activity Feed
+- **Filters**: Spikes, Orders, Fills, Exits, P&L, Errors, System
+- **Real-Time Updates**: Instant updates via WebSocket
+- **Auto-Scroll**: Optional auto-scroll to latest activity
 
-# 3. Start trading (dry run by default)
-python poly.py start
-```
-
-### Example: Find and Trade a Market
-
-```bash
-# Find market from Polymarket URL
-python poly.py market https://polymarket.com/event/some-market-slug
-
-# Update your .env with the slug shown, then:
-python poly.py start
-```
+#### Settings Panel
+- **Global Settings**: Slippage, min liquidity, tick interval
+- **Killswitch**: Emergency stop all bots
+- **Daily Loss Limit**: Auto-pause on reaching limit
+- **Persistence**: Settings saved to `data/settings.json`
 
 ---
 
 ## Configuration
 
-### Complete `.env` Reference
+### No More .env Files!
 
-```env
-# ============================================================
-# WALLET & AUTHENTICATION
-# ============================================================
-PRIVATE_KEY=your_64_hex_private_key_without_0x
-SIGNATURE_TYPE=0                  # 0=EOA, 2=Gnosis Safe Proxy
-FUNDER_ADDRESS=0x...              # Required only if SIGNATURE_TYPE=2
+All configuration is now managed through the **frontend UI**. When you create a bot, you configure:
 
-# ============================================================
-# MARKET SELECTION
-# ============================================================
-MARKET_SLUG=event-slug-from-url   # e.g., wta-mcnally-juvan-2026-01-09
-MARKET_TOKEN_ID=                  # Optional: direct token ID
-MARKET_INDEX=0                    # Which market within event (0=first)
+#### Wallet Settings (Per Bot)
+| Setting | Description |
+|---------|-------------|
+| `private_key` | 64-character hex string (without 0x prefix) |
+| `signature_type` | 0 = EOA (direct), 2 = Gnosis Proxy |
+| `funder_address` | Required only for Proxy mode |
 
-# ============================================================
-# WEBSOCKET & REAL-TIME DETECTION (NEW v2)
-# ============================================================
-WSS_ENABLED=true                  # Enable real-time WebSocket
-WSS_RECONNECT_DELAY=1.0           # Seconds between reconnection attempts
-WSS_MAX_RECONNECT_DELAY=60.0      # Max reconnection delay
+#### Market Settings (Per Bot)
+| Setting | Description |
+|---------|-------------|
+| `market_slug` | URL slug from polymarket.com |
+| `market_token_id` | Direct token ID (alternative to slug) |
+| `market_index` | Which outcome to trade (0=YES, 1=NO) |
 
-# ============================================================
-# MULTI-WINDOW SPIKE DETECTION (NEW v2)
-# ============================================================
-SPIKE_THRESHOLD_PCT=8.0           # % change to trigger trade
-SPIKE_WINDOWS_MINUTES=10,30,60    # Time windows to check (comma-separated)
-USE_VOLATILITY_FILTER=true        # Filter high-volatility periods
-MAX_VOLATILITY_CV=10.0            # Max coefficient of variation
-MIN_SPIKE_STRENGTH=5.0            # Minimum spike strength to trade
+#### Strategy Settings (Per Bot)
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `spike_threshold_pct` | 3.0 | Minimum % change to detect spike |
+| `take_profit_pct` | 5.0 | Exit when profit reaches this % |
+| `stop_loss_pct` | 3.0 | Exit when loss reaches this % |
+| `trade_size_usd` | 5.0 | Amount per trade in USD |
+| `max_hold_seconds` | 3600 | Maximum position hold time |
+| `cooldown_sec` | 120 | Seconds between trades |
+| `dry_run` | true | Simulate trades (no real orders) |
 
-# ============================================================
-# TRADING PARAMETERS
-# ============================================================
-DEFAULT_TRADE_SIZE_USD=2.0        # Amount per trade
-MIN_TRADE_USD=1.0                 # Polymarket minimum
-MAX_TRADE_USD=100.0               # Safety maximum
-COOLDOWN_SECONDS=120              # Wait between trades
+#### Trading Profiles
 
-# ============================================================
-# RISK MANAGEMENT
-# ============================================================
-TAKE_PROFIT_PCT=3.0               # Exit at +3% profit
-STOP_LOSS_PCT=2.5                 # Exit at -2.5% loss
-MAX_HOLD_SECONDS=3600             # Force exit after 60 minutes
-MAX_CONCURRENT_TRADES=1           # Max positions per market
+| Profile | Spike Threshold | Take Profit | Stop Loss | Trade Size |
+|---------|-----------------|-------------|-----------|------------|
+| **Normal** | 3.0% | 5.0% | 3.0% | $5.00 |
+| **Live** | 2.5% | 4.0% | 2.5% | $10.00 |
+| **Edge** | 1.5% | 2.5% | 1.5% | $20.00 |
+| **Ultra-Conservative** | 5.0% | 10.0% | 5.0% | $1.00 |
 
-# ============================================================
-# PRICE SETTINGS
-# ============================================================
-PRICE_HISTORY_SIZE=3600           # Max price history samples
-PRICE_POLL_INTERVAL_SEC=1.0       # REST polling interval
-USE_GAMMA_PRIMARY=false           # Use Gamma API as primary price
-
-# ============================================================
-# ORDERBOOK GUARDS
-# ============================================================
-MIN_BID_LIQUIDITY=5.0              # Minimum bid liquidity
-MIN_ASK_LIQUIDITY=5.0              # Minimum ask liquidity
-MAX_SPREAD_PCT=1.0                # Maximum spread percentage
-
-# ============================================================
-# LOGGING & SAFETY
-# ============================================================
-LOG_LEVEL=INFO                    # DEBUG, INFO, WARNING, ERROR
-LOG_FORMAT=PLAIN                  # PLAIN or JSON
-DRY_RUN=true                      # Simulate trades (NO real money)
-```
-
-### Finding Markets
-
-1. Browse https://polymarket.com/markets
-2. Find an event (e.g., sports match)
-3. Copy the slug from the URL
-4. Determine the market index:
-   - Index 0 = First market (often handicap)
-   - Index 10-11 = Main moneyline/series winner
-
----
-
-## Project Structure
+### Configuration Storage
 
 ```
-PolyAgent/
-├── start_bot.py               # Entry point - starts the trading bot
-├── poly.py                    # Unified CLI tool for all operations
-├── requirements.txt            # Python dependencies
-├── .env                        # User configuration (create from .env.example)
-├── .env.example                # Configuration template
-│
-├── src/                        # Core source code
-│   ├── __init__.py
-│   ├── config.py              # Configuration loading & validation
-│   ├── clob_client.py         # Polymarket API wrapper (EOA/Proxy)
-│   ├── bot.py                 # Main bot loop & Spike Sam strategy
-│   ├── websocket_client.py    # Real-time WebSocket client
-│   └── deprecated/            # Unused modules (kept for reference)
-│
-├── scripts/                    # Operational scripts
-│   ├── easy_setup.py          # Interactive setup wizard
-│   ├── quick_start.py         # One-click launcher
-│   ├── get_market_from_url.py # Extract market data from URL
-│   ├── check_status.py        # Check current positions & P&L
-│   ├── find_tradeable_market.py  # Find markets with orderbooks
-│   ├── manual_trade.py        # Execute one-off buy/sell orders
-│   ├── check_setup.py         # Verify configuration
-│   ├── check_orderbook.py     # Inspect orderbook state
-│   ├── sell_all_positions.py  # Emergency exit
-│   └── ...                    # Other utility scripts
-│
-├── tests/                      # Test suite
-│   ├── test_end_to_end.py     # Integration tests
-│   └── test_midprice_and_spike.py # Unit tests
-│
-├── data/                       # Runtime data (created at runtime)
-│   └── position.json          # Persistent position state
-│
-└── logs/                       # Log files (created at runtime)
-    └── bot_*.log              # Per-session logs (e.g., bot_20250110_143052.log)
+data/
+├── bots/                    # Bot configurations (encrypted)
+│   ├── bot_abc123.json
+│   └── bot_def456.json
+├── settings.json            # Global settings
+├── .encryption_key          # Fernet encryption salt
+└── position.json            # Legacy position backup
 ```
 
 ---
 
-## How It Works
+##  Trading Strategies
 
-### Architecture Flow
+### Spike Sam Strategy (Default)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         PolyAgent Architecture                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐         │
-│  │   WebSocket  │    │   REST API   │    │   Config     │         │
-│  │   (~1 sec)   │    │   (backup)   │    │   (.env)     │         │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘         │
-│         │                    │                    │                 │
-│         └────────┬───────────┘                    │                 │
-│                  ▼                                │                 │
-│         ┌────────────────┐                       │                 │
-│         │  Price History │                       │                 │
-│         │  (deque)       │                       │                 │
-│         └────────┬───────┘                       │                 │
-│                  │                                │                 │
-│                  ▼                                ▼                 │
-│         ┌─────────────────────────────────────────────────┐        │
-│         │              Spike Detection Engine             │        │
-│         │  ┌─────────────────────────────────────────┐    │        │
-│         │  │ Multi-Window Analysis (10/30/60 min)    │    │        │
-│         │  │ - Compare current vs window baseline    │    │        │
-│         │  │ - Find max spike across all windows     │    │        │
-│         │  │ - Apply volatility filter (CV check)    │    │        │
-│         │  └─────────────────────────────────────────┘    │        │
-│         └────────────────────────┬────────────────────────┘        │
-│                  │                │                                 │
-│                  ▼                ▼                                 │
-│         ┌──────────────┐  ┌──────────────┐                          │
-│         │   Risk       │  │  Spike Sam   │                          │
-│         │   Manager    │  │  Strategy    │                          │
-│         └──────┬───────┘  └──────┬───────┘                          │
-│                │                 │                                   │
-│                └────────┬────────┘                                   │
-│                         ▼                                            │
-│              ┌──────────────────┐                                    │
-│              │  Order Execution │                                    │
-│              │  (Polymarket     │                                    │
-│              │   CLOB API)      │                                    │
-│              └─────────┬────────┘                                    │
-│                        │                                             │
-│                        ▼                                             │
-│              ┌──────────────────┐                                    │
-│              │  Position & P&L  │                                    │
-│              │  Tracking        │                                    │
-│              └──────────────────┘                                    │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
+The bot "fades" price spikes - betting they will reverse:
 
-### Main Loop
+1. **Detect Spike**: Price moves more than `spike_threshold_pct` over time windows
+2. **Direction Analysis**: 
+   - Downward spike → BUY (expect bounce back up)
+   - Upward spike → SELL (expect reversion down)
+3. **Risk Controls**: Apply TP/SL/time-based exits
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. FETCH PRICE                                                  │
-│     → WebSocket: Real-time trade events (~1 sec latency)         │
-│     → REST: Fallback every 30 seconds                           │
-├─────────────────────────────────────────────────────────────────┤
-│  2. UPDATE HISTORY                                              │
-│     → Append (timestamp, price) to deque                        │
-├─────────────────────────────────────────────────────────────────┤
-│  3. CHECK RISK EXITS (if position open)                          │
-│     → Take Profit hit? → Exit                                   │
-│     → Stop Loss hit? → Exit                                     │
-│     → Max hold time? → Exit                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  4. DETECT SPIKE (Multi-Window)                                  │
-│     → For each window (10/30/60 min):                            │
-│       - Get baseline price from window start                    │
-│       - Calculate: (current - baseline) / baseline × 100         │
-│     → Return maximum spike across all windows                    │
-│     → Apply volatility filter (CV check)                         │
-├─────────────────────────────────────────────────────────────────┤
-│  5. STRATEGY DECISION                                            │
-│     → Spike Sam (fade spikes):                                  │
-│       • spike ≥ +threshold → SELL                               │
-│       • spike ≤ -threshold → BUY                                │
-│       • else → HOLD                                             │
-├─────────────────────────────────────────────────────────────────┤
-│  6. PRE-TRADE VALIDATION (NEW)                                  │
-│     → Balance check: sufficient USDC.e available?               │
-│     → Orderbook health: liquidity and spread acceptable?        │
-│     → Smart pricing: calculate execution price with slippage    │
-│     → Skip order if validation fails (prevents wasted fees)     │
-├─────────────────────────────────────────────────────────────────┤
-│  7. EXECUTE TRADE                                               │
-│     → Risk check: size, position limit, cooldown                │
-│     → Place market order (FOK) via CLOB API                     │
-│     → Smart retry: exponential backoff, early exit on errors    │
-│     → Track position state ONLY if order succeeds               │
-│     → Add settlement delay after exits (prevent race conditions)│
-├─────────────────────────────────────────────────────────────────┤
-│  8. UPDATE P&L                                                   │
-│     → Calculate realized P&L on exit                            │
-│     → Save state to position.json                               │
-├─────────────────────────────────────────────────────────────────┤
-│  9. SLEEP & REPEAT                                               │
-│     → Sleep 1 second (configurable)                             │
-└─────────────────────────────────────────────────────────────────┘
+Price drops 5% suddenly
+  → Bot detects downward spike
+  → Places BUY order
+  → Sets Take Profit at +5%
+  → Either hits TP or SL exits position
 ```
 
-### The Spike Sam Strategy
+### Train of Trade Strategy
 
+Sequential target-based trading that runs continuously:
+
+1. **Initial State**: Set BUY target below current price
+2. **Buy Trigger**: When price drops to target, BUY
+3. **Sell Target**: Set target above entry (entry × (1 + take_profit_pct))
+4. **Sell Trigger**: When price rises to target, SELL
+5. **Repeat**: Set new BUY target, continue cycle
+
+```python
+# Cycle illustration:
+# Price: $0.50 → Set BUY target at $0.485 (−3%)
+# Price drops to $0.485 → BUY triggered
+# Set SELL target at $0.509 (entry × 1.05)
+# Price rises to $0.509 → SELL triggered (+5% profit)
+# Set new BUY target at $0.494 (−3%)
+# Repeat...
 ```
-spike_pct = (current_price - baseline_price) / baseline_price × 100
 
-if spike_pct ≥ +threshold:
-    → SELL (fade the upward spike - market overreacted)
-elif spike_pct ≤ -threshold:
-    → BUY (fade the downward spike - market oversold)
-else:
-    → HOLD (no significant spike)
+### Multi-Window Spike Detection
+
+Analyzes price changes over multiple time windows:
+
+```python
+# Default windows: 10, 30, 60 minutes
+# For each window:
+#   1. Get prices from that window
+#   2. Calculate % change from oldest to current
+#   3. Check coefficient of variation (volatility filter)
+#   4. Take maximum spike across all windows
 ```
-
-**Example:**
-- Price was 0.80, now 0.84
-- Spike = (0.84 - 0.80) / 0.80 × 100 = +5%
-- If threshold = 3%, trigger SELL (fade the pump)
 
 ---
 
-## Operations Guide
+##  API Reference
 
-### Testing Process
+### REST Endpoints
 
-1. **Dry Run First**
-   ```env
-   DRY_RUN=true
-   ```
+All endpoints are served from `http://localhost:8000`.
 
-2. **Verify Setup**
-   ```bash
-   python scripts/check_setup.py
-   ```
+#### Bot Management
 
-3. **Manual Trade Test**
-   ```bash
-   python scripts/manual_trade.py --buy --size 1.05
-   ```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/bots` | List all bots with status |
+| `POST` | `/api/bots` | Create new bot |
+| `GET` | `/api/bots/{id}` | Get bot details |
+| `PUT` | `/api/bots/{id}` | Update bot config |
+| `DELETE` | `/api/bots/{id}` | Delete bot |
+| `POST` | `/api/bots/{id}/start` | Start bot |
+| `POST` | `/api/bots/{id}/stop` | Stop bot |
+| `POST` | `/api/bots/{id}/trade` | Execute manual trade |
+| `POST` | `/api/bots/{id}/close` | Close position |
+| `GET` | `/api/bots/{id}/activities` | Get activity log |
+| `GET` | `/api/bots/{id}/chart-data` | Get price chart data |
 
-4. **Run Bot (Dry Run)**
-   ```bash
-   python start_bot.py
-   ```
+#### Market Data
 
-5. **Go Live**
-   ```env
-   DRY_RUN=false
-   ```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/markets/{slug}` | Get market info |
+| `GET` | `/api/prices/{token_id}` | Get current price |
+| `GET` | `/api/orderbook/{token_id}` | Get orderbook |
 
-### Monitoring Commands
+#### Settings
 
-| Command | Purpose |
-|---------|---------|
-| `python poly.py status` | Show current position and P&L |
-| `python poly.py market <slug>` | Get market info from URL/slug |
-| `python scripts/check_setup.py` | Verify configuration |
-| `python scripts/check_status.py` | Show current positions |
-| `python scripts/check_orderbook.py` | Inspect orderbook |
-| `python scripts/manual_trade.py --buy --size 1.05` | Manual buy |
-| `python scripts/manual_trade.py --sell --size 1.05` | Manual sell |
-| `python scripts/sell_all_positions.py` | Emergency exit |
-| `python poly.py reset` | Reset position state |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/settings` | Get global settings |
+| `POST` | `/api/settings` | Update global settings |
+| `GET` | `/api/profiles` | List trading profiles |
 
-### Understanding Log Output
+### WebSocket Events
 
-The bot uses a clean [TAG] format for professional, parseable logs (no emojis).
+Connect to `ws://localhost:8000/ws` for real-time updates.
 
-| Log Pattern | Meaning |
-|-------------|---------|
-| `[TRADE] 0.8400 BUY` | Real-time trade via WebSocket |
-| `[SPIKE_#N] +4.35%` | Spike detected |
-| `[ENTRY] SELL` | Position opened |
-| `[POSITION_OPENED]` | Position successfully opened |
-| `[POSITION_CLOSED]` | Position exited |
-| `[EXIT_TAKE_PROFIT]` | Profitable exit |
-| `[EXIT_STOP_LOSS]` | Loss cut |
-| `[EXIT_TIME]` | Max hold reached |
-| `[ORDER_FILLED]` | Order successfully executed |
-| `[PRE_CHECK_FAILED]` | Pre-trade validation failed (order skipped) |
-| `[BALANCE_OK]` | Sufficient balance confirmed |
-| `[ORDERBOOK_HEALTHY]` | Orderbook has enough liquidity |
-| `Total P&L: $+0.26` | Cumulative profit |
-| `Win Rate: 6/11` | Success rate |
+#### Incoming Events (Server → Client)
 
-### Pre-Check Failures
+```typescript
+// Price update
+{ type: "price", bot_id: "xxx", price: 0.55, timestamp: "..." }
 
-When you see `[PRE_CHECK_FAILED]`, the bot skipped an order attempt because:
+// Position update
+{ type: "position", bot_id: "xxx", position: {...} }
 
-| Error Message | Cause | Solution |
-|---------------|-------|----------|
-| `Insufficient balance: $X < $Y` | Not enough USDC.e | Add more funds or reduce trade size |
-| `Insufficient allowance: $X < $Y` | Contract not approved | Trade once on Polymarket to approve |
-| `Low bid liquidity: $X` | Not enough buy orders for SELL | Choose more liquid market |
-| `Low ask liquidity: $X` | Not enough sell orders for BUY | Choose more liquid market |
-| `Wide spread: X% > Y%` | Bid/ask gap too large | Market illiquid, wait or switch |
+// Spike detected
+{ type: "spike", bot_id: "xxx", spike_pct: 3.5, direction: "down" }
+
+// Activity
+{ type: "activity", bot_id: "xxx", activity_type: "order", message: "..." }
+
+// Target update (Train of Trade)
+{ type: "target", bot_id: "xxx", target_price: 0.52, action: "buy" }
+
+// Error
+{ type: "error", bot_id: "xxx", error: "..." }
+```
 
 ---
 
-## Troubleshooting
+##  Scripts & Utilities
 
-| Issue | Solution |
-|-------|----------|
-| `PRIVATE_KEY format error` | Must be 64 hex chars, no `0x` prefix |
-| `FUNDER_ADDRESS required` | Set it when `SIGNATURE_TYPE=2` |
-| `WebSocket error: Event loop is closed` | Normal shutdown message |
-| No trades happening | Lower `SPIKE_THRESHOLD_PCT`, wait for history to fill |
-| Order not filling | Market illiquid - check orderbook, try smaller size |
-| Invalid signature | Check `FUNDER_ADDRESS` matches your proxy wallet |
-| Price stuck at 0.01/0.99 | Market resolved or illiquid |
-| `No orderbook exists for requested token id` | Market has no CLOB activity - try different market |
-| `[PRE_CHECK_FAILED] Insufficient balance` | Add USDC.e to wallet or reduce `DEFAULT_TRADE_SIZE_USD` |
-| `[PRE_CHECK_FAILED] Low bid/ask liquidity` | Choose a more liquid market with active trading |
-| `[PRE_CHECK_FAILED] Wide spread` | Spread too large - wait or switch to different market |
-| `[ENTRY_SKIPPED]` | Order validation failed - check pre-check logs for reason |
+Located in `scripts/` directory:
 
-### Emergency Exit
+| Script | Purpose |
+|--------|---------|
+| `check_setup.py` | Verify wallet, credentials, and configuration |
+| `check_status.py` | Check current positions and balances |
+| `check_orderbook.py` | Display orderbook for configured market |
+| `check_spreads.py` | Analyze bid-ask spreads |
+| `easy_setup.py` | Interactive setup wizard |
+| `approve_usdc.py` | Approve USDC.e for EOA trading |
+| `approve_usdc_gnosis.py` | Approve USDC.e for Proxy trading |
+| `find_best_market.py` | Find markets with good liquidity |
+| `find_tradeable_market.py` | Find active tradeable markets |
+| `get_market_from_url.py` | Extract token ID from Polymarket URL |
+| `compare_prices.py` | Compare prices from different sources |
+| `manual_trade.py` | Execute manual test trades |
+| `sell_all_positions.py` | Emergency: sell all positions |
+| `test_full_cycle.py` | Test complete buy→hold→sell cycle |
+| `test_live_trade.py` | Test live trading (small amounts) |
+| `poly_tools.py` | Various Polymarket utility functions |
+
+### Usage Examples
 
 ```bash
+# Check your setup
+python scripts/check_setup.py
+
+# Find a liquid market to trade
+python scripts/find_best_market.py
+
+# Test a trade cycle
+python scripts/test_full_cycle.py
+
+# Emergency: close all positions
 python scripts/sell_all_positions.py
 ```
 
 ---
 
-## Safety Tips
+## Testing
 
-1. **ALWAYS start with `DRY_RUN=true`**
-2. **Use small trade sizes** ($1-5 for testing)
-3. **Use a dedicated trading wallet** - never your main wallet
-4. **Monitor logs closely** when first running
-5. **Understand the Spike Sam strategy** - it fades spikes, may lose in trending markets
-6. **Keep USDC.e for trading** + **MATIC for gas**
-7. **Choose liquid markets** - illiquid markets have wide spreads
+### Backend Tests (pytest)
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_trading_cycle.py -v
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=html
+```
+
+#### Test Files
+
+| Test File | Coverage |
+|-----------|----------|
+| `test_end_to_end.py` | Full trading flow |
+| `test_trading_cycle.py` | Buy→Sell cycle logic |
+| `test_midprice_and_spike.py` | Price calculation and spike detection |
+| `test_websocket_callbacks.py` | WebSocket event handling |
+| `test_rebuy_config.py` | Rebuy strategy configuration |
+| `test_runtime_state.py` | State persistence |
+| `test_market_endpoints.py` | API endpoint testing |
+
+### Frontend Tests (Playwright)
+
+```bash
+cd frontend
+
+# Run all E2E tests
+npm run test:e2e
+
+# Run with UI mode
+npm run test:e2e:ui
+
+# Run with visible browser
+npm run test:e2e:headed
+```
 
 ---
 
-## Live Trading Test Results
+##  Operations Guide
 
-**Market:** WTA Tennis - McNally vs Juvan (2026-01-09)
-**Duration:** 3 minutes
-**Mode:** Dry Run
+### Starting Everything
 
-| Spike | Entry | Exit | P&L |
-|-------|-------|------|-----|
-| #1: +4.29% | SELL 0.8400 | BUY 0.8300 | +1.19% |
-| #2: +4.29% | SELL 0.8500 | BUY 0.8150 | +4.12% |
-| #3: +9.20% | SELL 0.8900 | BUY 0.8550 | +3.93% |
+```bash
+# 1. Start API server (keep running)
+python -m src.api_server
 
-**Total: +$0.26 | Win Rate: 6/11 (54.5%)**
+# 2. Start frontend (keep running)
+cd frontend && npm run dev
+
+# 3. Access dashboard at http://localhost:3000
+```
+
+### Creating Your First Bot
+
+1. Click **"Create Bot"** in the Bot Manager Panel
+2. Enter bot name and description
+3. Paste your private key (64 hex characters, no 0x prefix)
+4. Choose signature type (EOA for most users)
+5. Enter market slug from Polymarket URL
+6. Select a trading profile or customize settings
+7. Enable **Dry Run** for testing
+8. Click **Create Bot**
+
+### Going Live
+
+1. Verify setup with dry run trades
+2. Monitor bot for expected behavior
+3. Edit bot configuration
+4. Set `Dry Run: false`
+5. Start with small amounts ($1-5)
+6. Monitor continuously initially
+
+### Emergency Stop
+
+- **Dashboard**: Click the `Killswitch` button in Settings
+- **Individual Bot**: Click `Stop` button for that bot
+- **Terminal**: `Ctrl+C` to stop the API server
+- **Script**: `python scripts/sell_all_positions.py`
+
+### Monitoring
+
+- **Dashboard**: Real-time activity feed, price chart, P&L
+- **API Logs**: Check the terminal running `api_server.py`
+- **Position State**: Check `data/bots/*.json`
 
 ---
 
-## Risk Disclaimer
+##  Troubleshooting
 
-Trading involves risk. You can lose money. This software is provided as-is with no warranties. Always use `DRY_RUN=true` first and trade responsibly.
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| **"No balance/allowance"** | Approve USDC.e: `python scripts/approve_usdc.py` |
+| **"Token not found"** | Check market slug or use token ID directly |
+| **"Order failed"** | Check spread, liquidity; market might be thin |
+| **"WebSocket disconnected"** | Normal reconnection happens automatically |
+| **"Encryption error"** | Delete `data/.encryption_key` and recreate bots |
+| **"CORS error"** | Ensure API runs on port 8000, frontend on 3000 |
+| **"No price available"** | Check if market is active and has trades |
+
+### Checking Setup
+
+```bash
+# Full diagnostic
+python scripts/check_setup.py
+
+# Check wallet balance
+python scripts/check_status.py
+
+# Test market connection
+python scripts/check_orderbook.py
+```
+
+### Logs
+
+The API server logs to stdout. Key log patterns:
+
+```
+INFO:     [BOT_abc123] Price: 0.55 | Target: SELL @ 0.58
+INFO:     [TRADE] Executing BUY $5.00
+INFO:     [ORDER] Filled: BUY $5.00 @ 0.52
+WARNING:  [RISK] Stop loss triggered at -3.2%
+```
 
 ---
 
+##  Security
+
+### Private Key Protection
+
+- Private keys are **encrypted** using Fernet symmetric encryption
+- Encryption key derived from machine-specific data (user + home path)
+- Salt stored in `data/.encryption_key`
+- Only works on the machine where bot was created
+
+### Best Practices
+
+1. **Use a dedicated trading wallet** - Never use your main wallet
+2. **Fund with small amounts** - Only what you're willing to lose
+3. **Start with dry run** - Test thoroughly before live trading
+4. **Secure data/ folder** - Contains encrypted private keys
+5. **Don't commit .env or data/** - Already in .gitignore
+
+### File Permissions
+
+```bash
+# Restrict key file (Linux/Mac)
+chmod 600 data/.encryption_key
+
+# Restrict bot configs
+chmod 600 data/bots/*
+```
+
+---
+
+##  Project Structure
+
+```
+PolyAgent/
+├── src/                       # Python backend
+│   ├── api_server.py          # FastAPI server
+│   ├── bot.py                 # Bot engine
+│   ├── bot_session.py         # Isolated bot sessions
+│   ├── clob_client.py         # Polymarket client
+│   ├── config.py              # Configuration
+│   ├── crypto.py              # Encryption utilities
+│   ├── multi_bot_manager.py   # Legacy multi-bot
+│   ├── train_bot.py           # Train strategy
+│   ├── websocket_client.py    # Market WebSocket
+│   └── user_websocket_client.py # User channel
+│
+├── frontend/                  # Next.js frontend
+│   ├── app/                   # Next.js app router
+│   ├── components/            # React components
+│   │   ├── panels/            # Dashboard panels
+│   │   └── ui/                # UI primitives (shadcn)
+│   ├── contexts/              # React contexts
+│   └── hooks/                 # Custom hooks
+│
+├── scripts/                   # CLI utilities
+├── tests/                     # Python tests
+├── data/                      # Runtime data
+│   ├── bots/                  # Bot configs
+│   └── settings.json          # Global settings
+│
+├── docs/                      # Documentation
+│   ├── ARCHITECTURE.md        # System architecture
+│   └── NOOB_GUIDE.md          # Beginner's guide
+│
+|
+├── requirements.txt           # Python dependencies
+├── conftest.py                # Pytest configuration
+└── README.md                  # This file
+```
+
+---
+
+## Additional Documentation
+
+- **[Architecture Guide](docs/ARCHITECTURE.md)** - Deep dive into system design
+- **[Beginner's Guide](docs/NOOB_GUIDE.md)** - Step-by-step for new users
+
+---
+
+##  Acknowledgments
+
+- [Polymarket](https://polymarket.com) - The prediction market platform
+- [py-clob-client](https://github.com/Polymarket/py-clob-client) - Official Python SDK
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern API framework
+- [Next.js](https://nextjs.org/) - React framework
+- [shadcn/ui](https://ui.shadcn.com/) - UI component library
+- [Recharts](https://recharts.org/) - Charting library
+
+---
+
+##  Disclaimer
+
+**Trading on prediction markets involves significant risk. You can lose your entire investment. This software is provided "as is" without warranty. The authors are not responsible for any financial losses incurred. Only trade with funds you can afford to lose.**
+
+---
+
+<div align="center">
+
+**Happy Trading!**
+
+*Made with ❤️ for the Polymarket community*
+
+</div>
