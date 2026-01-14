@@ -1,20 +1,23 @@
-"""Centralized configuration loaded from .env only.
+"""Centralized configuration for the Polymarket trading bot.
 
-This module provides a typed Config object with validation and sensible defaults
-for the Polymarket trading bot. It supports both EOA (SIGNATURE_TYPE=0) and
-Proxy (SIGNATURE_TYPE=2) operation modes.
+This module provides a typed Config object with validation and sensible defaults.
+It supports both EOA (SIGNATURE_TYPE=0) and Proxy (SIGNATURE_TYPE=2) operation modes.
 
-Updated with v2 features:
+IMPORTANT: All configuration is managed via the frontend UI.
+No environment variables are used. Configuration is stored in data/bots/*.json
+
+Features:
 - WebSocket real-time detection settings
 - Multi-window spike detection configuration
 - Volatility filtering options
+- Trading profiles (normal, live, edge)
+- Multi-bot support
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional, List
-from dotenv import load_dotenv
+from typing import Optional, List, Dict, Any
 
 
 def _parse_list(val: Optional[str], default: List[int]) -> List[int]:
@@ -25,6 +28,127 @@ def _parse_list(val: Optional[str], default: List[int]) -> List[int]:
         return [int(x.strip()) for x in val.split(",")]
     except ValueError:
         return default
+
+
+@dataclass
+class TradingProfile:
+    """Trading profile with preset configurations for different market conditions."""
+
+    name: str
+    description: str
+    spike_threshold_pct: float
+    take_profit_pct: float
+    stop_loss_pct: float
+    default_trade_size_usd: float
+    max_hold_seconds: int
+    cooldown_seconds: int = 120
+    min_spike_strength: float = 5.0
+    use_volatility_filter: bool = True
+    max_volatility_cv: float = 10.0
+    rebuy_delay_seconds: float = 2.0
+    rebuy_strategy: str = "immediate"
+    rebuy_drop_pct: float = 0.1
+
+    @classmethod
+    def get_profile(cls, name: str) -> "TradingProfile":
+        """Get a trading profile by name."""
+        profiles = cls.get_all_profiles()
+        name = name.lower()
+        if name not in profiles:
+            raise ValueError(f"Unknown profile: {name}. Available: {list(profiles.keys())}")
+        return profiles[name]
+
+    @classmethod
+    def get_all_profiles(cls) -> Dict[str, "TradingProfile"]:
+        """Get all available trading profiles."""
+        return {
+            "normal": cls(
+                name="normal",
+                description="Balanced settings for general markets",
+                spike_threshold_pct=8.0,
+                take_profit_pct=3.0,
+                stop_loss_pct=2.5,
+                default_trade_size_usd=2.0,
+                max_hold_seconds=3600,
+                cooldown_seconds=120,
+                min_spike_strength=5.0,
+                use_volatility_filter=True,
+                max_volatility_cv=10.0,
+                rebuy_delay_seconds=2.0,
+                rebuy_strategy="immediate",
+                rebuy_drop_pct=0.1,
+            ),
+            "live": cls(
+                name="live",
+                description="More aggressive for high-volatility live markets",
+                spike_threshold_pct=5.0,
+                take_profit_pct=2.0,
+                stop_loss_pct=1.5,
+                default_trade_size_usd=1.0,
+                max_hold_seconds=1800,
+                cooldown_seconds=60,
+                min_spike_strength=3.0,
+                use_volatility_filter=False,  # Don't filter in fast-moving markets
+                max_volatility_cv=20.0,
+                rebuy_delay_seconds=1.0,
+                rebuy_strategy="immediate",
+                rebuy_drop_pct=0.0,
+            ),
+            "edge": cls(
+                name="edge",
+                description="Conservative settings for edge trading",
+                spike_threshold_pct=12.0,
+                take_profit_pct=5.0,
+                stop_loss_pct=3.0,
+                default_trade_size_usd=5.0,
+                max_hold_seconds=7200,
+                cooldown_seconds=300,
+                min_spike_strength=8.0,
+                use_volatility_filter=True,
+                max_volatility_cv=5.0,
+                rebuy_delay_seconds=5.0,
+                rebuy_strategy="wait_for_drop",
+                rebuy_drop_pct=0.5,
+            ),
+            "custom": cls(
+                name="custom",
+                description="Custom profile - use .env to override all values",
+                spike_threshold_pct=8.0,
+                take_profit_pct=3.0,
+                stop_loss_pct=2.5,
+                default_trade_size_usd=2.0,
+                max_hold_seconds=3600,
+                cooldown_seconds=120,
+                min_spike_strength=5.0,
+                use_volatility_filter=True,
+                max_volatility_cv=10.0,
+                rebuy_delay_seconds=2.0,
+                rebuy_strategy="immediate",
+                rebuy_drop_pct=0.1,
+            ),
+        }
+
+    def apply_to_config(self, config: "Config") -> "Config":
+        """Create a new config with profile values applied."""
+        # Create a new config with profile values
+        import dataclasses
+
+        config_dict = dataclasses.asdict(config)
+        config_dict.update({
+            "spike_threshold_pct": self.spike_threshold_pct,
+            "take_profit_pct": self.take_profit_pct,
+            "stop_loss_pct": self.stop_loss_pct,
+            "default_trade_size_usd": self.default_trade_size_usd,
+            "max_hold_seconds": self.max_hold_seconds,
+            "cooldown_seconds": self.cooldown_seconds,
+            "min_spike_strength": self.min_spike_strength,
+            "use_volatility_filter": self.use_volatility_filter,
+            "max_volatility_cv": self.max_volatility_cv,
+            "rebuy_delay_seconds": self.rebuy_delay_seconds,
+            "rebuy_strategy": self.rebuy_strategy,
+            "rebuy_drop_pct": self.rebuy_drop_pct,
+        })
+        return Config(**config_dict)
 
 
 @dataclass
@@ -81,10 +205,40 @@ class Config:
     first_entry_after_seconds: int = 10
     min_history_for_entry: int = 10
 
+    # Startup entry mode
+    # immediate_buy | wait_for_spike | delayed_buy
+    entry_mode: str = "wait_for_spike"
+    entry_delay_seconds: int = 0
+
+    # Session limits
+    max_trades_per_session: int = 0  # 0=disabled
+    session_loss_limit_usd: float = 0.0
+
+    # Daily limit (injected from global settings at start)
+    daily_loss_limit_usd: float = 0.0
+
     # Orderbook guards
     min_bid_liquidity: float = 5.0
     min_ask_liquidity: float = 5.0  # Added for BUY order validation
     max_spread_pct: float = 1.0
+
+    # === Multi-Bot Settings ===
+    # Per-bot maximum balance allocation
+    max_balance_per_bot: float = 10.0  # Maximum USD each bot can use
+    # Enable bankroll management (default: true)
+    enable_bankroll_management: bool = True
+    # Percentage of total balance to allocate across all bots
+    max_allocation_pct: float = 0.8  # Keep 20% reserve
+
+    # === Rebuy Strategy ===
+    rebuy_delay_seconds: float = 2.0
+    rebuy_strategy: str = "immediate"  # "immediate" or "wait_for_drop"
+    rebuy_drop_pct: float = 0.1
+
+    # === Settlement Tracking ===
+    # Time to wait for order settlement confirmation (via User WebSocket or fallback)
+    # Polymarket settlements typically take 60-90 seconds
+    settlement_timeout_seconds: float = 10
 
     @staticmethod
     def _parse_bool(val: Optional[str], default: bool) -> bool:
@@ -94,120 +248,14 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        load_dotenv()
-        # Core
-        private_key = (os.getenv("PRIVATE_KEY") or "").strip()
-        if private_key.startswith("0x"):
-            private_key = private_key[2:]
-        if len(private_key) != 64:
-            raise ValueError("PRIVATE_KEY must be 64 hex characters (without 0x)")
-        # Validate hex
-        int(private_key, 16)
+        raise RuntimeError("Environment-based config is disabled. Provide config from frontend or use Config(...) explicitly.")
 
-        signature_type = int(os.getenv("SIGNATURE_TYPE", "0").strip())
-        funder_address = os.getenv("FUNDER_ADDRESS")
-        if signature_type == 2 and not funder_address:
-            raise ValueError("FUNDER_ADDRESS is required when SIGNATURE_TYPE=2 (Proxy mode)")
-
-        host = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com").strip()
-        chain_id = int(os.getenv("CHAIN_ID", "137").strip())
-
-        # Market
-        market_slug = os.getenv("MARKET_SLUG")
-        market_token_id = os.getenv("MARKET_TOKEN_ID")
-        market_index = os.getenv("MARKET_INDEX")
-        if market_index is not None:
-            market_index = int(market_index.strip())
-
-        # === V2: WebSocket Settings ===
-        wss_enabled = cls._parse_bool(os.getenv("WSS_ENABLED"), True)
-        wss_reconnect = float(os.getenv("WSS_RECONNECT_DELAY", "1.0"))
-        wss_max_reconnect = float(os.getenv("WSS_MAX_RECONNECT_DELAY", "60.0"))
-
-        # === V2: Multi-Window Spike Detection ===
-        spike_windows = _parse_list(os.getenv("SPIKE_WINDOWS_MINUTES"), [10, 30, 60])
-        use_volatility_filter = cls._parse_bool(os.getenv("USE_VOLATILITY_FILTER"), True)
-        max_volatility_cv = float(os.getenv("MAX_VOLATILITY_CV", "10.0"))
-        min_spike_strength = float(os.getenv("MIN_SPIKE_STRENGTH", "5.0"))
-
-        # Strategy (original + updated defaults)
-        spike_threshold_pct = float(os.getenv("SPIKE_THRESHOLD_PCT", "8.0"))
-        price_history_size = int(os.getenv("PRICE_HISTORY_SIZE", "3600"))
-        cooldown_seconds = int(os.getenv("COOLDOWN_SECONDS", "120"))
-        max_concurrent_trades = int(os.getenv("MAX_CONCURRENT_TRADES", "1"))
-        min_liquidity_requirement = float(os.getenv("MIN_LIQUIDITY_REQUIREMENT", "10"))
-
-        # Risk
-        default_trade_size_usd = float(os.getenv("DEFAULT_TRADE_SIZE_USD", "2.0"))
-        min_trade_usd = float(os.getenv("MIN_TRADE_USD", "1.0"))
-        max_trade_usd = float(os.getenv("MAX_TRADE_USD", "100.0"))
-        take_profit_pct = float(os.getenv("TAKE_PROFIT_PCT", "3.0"))
-        stop_loss_pct = float(os.getenv("STOP_LOSS_PCT", "2.5"))
-        max_hold_seconds = int(os.getenv("MAX_HOLD_SECONDS", "3600"))  # 60 minutes
-        slippage_tolerance = float(os.getenv("SLIPPAGE_TOLERANCE", "0.06"))
-
-        # Loop/logging
-        price_poll_interval_sec = float(os.getenv("PRICE_POLL_INTERVAL_SEC", "1.0"))
-        dry_run = cls._parse_bool(os.getenv("DRY_RUN"), True)
-        log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
-        log_format = os.getenv("LOG_FORMAT", "PLAIN").strip().upper()
-        log_file = os.getenv("LOG_FILE", "logs/bot.log").strip()
-
-        # Behavior toggles
-        use_gamma_primary = cls._parse_bool(os.getenv("USE_GAMMA_PRIMARY"), False)
-        force_first_entry = cls._parse_bool(os.getenv("FORCE_FIRST_ENTRY"), False)
-        first_entry_after_seconds = int(os.getenv("FIRST_ENTRY_AFTER_SECONDS", "10"))
-        min_history_for_entry = int(os.getenv("MIN_HISTORY_FOR_ENTRY", "10"))
-        min_bid_liquidity = float(os.getenv("MIN_BID_LIQUIDITY", "5"))
-        min_ask_liquidity = float(os.getenv("MIN_ASK_LIQUIDITY", "5"))
-        max_spread_pct = float(os.getenv("MAX_SPREAD_PCT", "1.0"))
-
-        # Construct
-        cfg = cls(
-            private_key=private_key,
-            signature_type=signature_type,
-            funder_address=funder_address if signature_type != 0 else None,
-            host=host,
-            chain_id=chain_id,
-            market_slug=market_slug,
-            market_token_id=market_token_id,
-            market_index=market_index,
-            # V2 settings
-            wss_enabled=wss_enabled,
-            wss_reconnect_delay=wss_reconnect,
-            wss_max_reconnect_delay=wss_max_reconnect,
-            spike_windows_minutes=spike_windows,
-            use_volatility_filter=use_volatility_filter,
-            max_volatility_cv=max_volatility_cv,
-            min_spike_strength=min_spike_strength,
-            # Original settings
-            spike_threshold_pct=spike_threshold_pct,
-            price_history_size=price_history_size,
-            cooldown_seconds=cooldown_seconds,
-            max_concurrent_trades=max_concurrent_trades,
-            min_liquidity_requirement=min_liquidity_requirement,
-            min_bid_liquidity=min_bid_liquidity,
-            min_ask_liquidity=min_ask_liquidity,
-            max_spread_pct=max_spread_pct,
-            default_trade_size_usd=default_trade_size_usd,
-            min_trade_usd=min_trade_usd,
-            max_trade_usd=max_trade_usd,
-            take_profit_pct=take_profit_pct,
-            stop_loss_pct=stop_loss_pct,
-            max_hold_seconds=max_hold_seconds,
-            slippage_tolerance=slippage_tolerance,
-            price_poll_interval_sec=price_poll_interval_sec,
-            dry_run=dry_run,
-            log_level=log_level,
-            log_format=log_format,
-            log_file=log_file,
-            use_gamma_primary=use_gamma_primary,
-            force_first_entry=force_first_entry,
-            first_entry_after_seconds=first_entry_after_seconds,
-            min_history_for_entry=min_history_for_entry,
-        )
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Config":
+        cfg = cls(**data)
         cfg.validate()
         return cfg
+
 
     def validate(self) -> None:
         if self.signature_type not in (0, 2):
