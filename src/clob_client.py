@@ -44,15 +44,18 @@ class Client:
             signature_type=int(config.signature_type),
             funder=config.funder_address if int(config.signature_type) != 0 else None,
         )
+        # Try to use explicit API credentials from environment if available
+        # NOTE: No environment variables are used - all config comes from frontend
+        # Derive API credentials from private key (Polymarket's standard method)
         api_creds = self._client.create_or_derive_api_creds()
         self._client.set_api_creds(api_creds)
-        
+
         # Store API credentials for User WebSocket authentication
         self._api_key = api_creds.api_key
         self._api_secret = api_creds.api_secret
         self._api_passphrase = api_creds.api_passphrase
         
-        logger.info("API credentials ready")
+        logger.info("API credentials derived from private key")
         self._token_cache: Dict[str, str] = {}
     
     def get_api_credentials(self) -> Dict[str, str]:
@@ -79,7 +82,7 @@ class Client:
         if self.config.market_token_id:
             return str(self.config.market_token_id)
         if not self.config.market_slug:
-            raise ValueError("Set MARKET_TOKEN_ID or MARKET_SLUG in .env")
+            raise ValueError("Provide market_token_id or market_slug in config")
 
         # Use config market_index if provided, otherwise use parameter
         if market_index is None:
@@ -427,10 +430,21 @@ class Client:
             Number of shares held (0.0 if none or error)
         """
         token = token_id or self.resolve_token_id()
-        address = self.config.funder_address
+        
+        # For Gnosis Proxy (signature_type=2), tokens go to the proxy wallet (funder)
+        # For EOA (signature_type=0), tokens go to the signer address
+        if self.config.signature_type == 2:
+            address = self.config.funder_address
+        else:
+            # EOA mode - derive address from private key
+            from eth_account import Account
+            pk = self.config.private_key
+            if not pk.startswith('0x'):
+                pk = '0x' + pk
+            address = Account.from_key(pk).address
         
         if not address:
-            logger.warning("[TOKEN_BALANCE] No funder address configured")
+            logger.warning("[TOKEN_BALANCE] No address to check")
             return 0.0
         
         try:
@@ -440,11 +454,37 @@ class Client:
             if resp.status_code == 200:
                 for pos in resp.json():
                     if pos.get("asset") == token:
-                        return float(pos.get("size", 0))
+                        size = float(pos.get("size", 0))
+                        logger.debug(f"[TOKEN_BALANCE] {address[:12]}... has {size} shares of {token[:16]}...")
+                        return size
             return 0.0
         except Exception as e:
             logger.warning(f"[TOKEN_BALANCE] Failed to fetch: {e}")
             return 0.0
+    
+    def verify_token_ownership(self, expected_shares: float, token_id: Optional[str] = None, 
+                                tolerance: float = 0.1) -> bool:
+        """Verify we actually own the expected number of tokens.
+        
+        This is a safety check before selling to ensure tokens settled on-chain.
+        
+        Args:
+            expected_shares: Number of shares we expect to own
+            token_id: Token ID to check
+            tolerance: Percentage tolerance for matching (0.1 = 10%)
+            
+        Returns:
+            True if we own at least (1-tolerance) * expected_shares
+        """
+        actual = self.get_token_balance(token_id)
+        min_required = expected_shares * (1 - tolerance)
+        
+        if actual >= min_required:
+            logger.info(f"[VERIFY_OK] Own {actual:.2f} shares (expected ~{expected_shares:.2f})")
+            return True
+        else:
+            logger.warning(f"[VERIFY_FAIL] Own {actual:.2f} shares but expected ~{expected_shares:.2f}")
+            return False
 
     def check_orderbook_health(self, side: str, amount_usd: float, token_id: Optional[str] = None,
                               min_liquidity: float = 1.0, max_spread_pct: float = 5.0) -> Tuple[bool, str, Dict[str, Any]]:
@@ -631,9 +671,52 @@ class Client:
                 signed = self._client.create_market_order(args)
                 resp = self._client.post_order(signed, order_type)
                 ok = bool(resp.get("success"))
+                
                 if ok:
                     order_id = resp.get('orderID', 'N/A')
-                    logger.info(f"[ORDER_FILLED] {order_id}")
+                    status = resp.get('status', '').upper()
+                    matched_amount = float(resp.get('matchedAmount', 0) or 0)
+                    
+                    # For DELAYED orders: The order was accepted but settlement is pending
+                    # This is common with Polymarket - we need to wait for on-chain confirmation
+                    if status == 'DELAYED':
+                        logger.info(f"[ORDER_DELAYED] {order_id[:24]}... - waiting for settlement")
+                        
+                        # Wait for settlement (check token balance)
+                        # Get current balance before
+                        balance_before = self.get_token_balance(token)
+                        
+                        # Wait up to 5 seconds for settlement, checking every second
+                        import time as _time
+                        for wait_sec in range(5):
+                            _time.sleep(1.0)
+                            balance_after = self.get_token_balance(token)
+                            if balance_after > balance_before:
+                                shares_received = balance_after - balance_before
+                                logger.info(f"[ORDER_SETTLED] {order_id[:24]}... received {shares_received:.2f} shares")
+                                resp['matchedAmount'] = amount_usd  # Approximate
+                                resp['status'] = 'CONFIRMED'
+                                return OrderResult(True, resp)
+                        
+                        # Still not settled after 5 seconds - treat as pending
+                        logger.warning(f"[ORDER_PENDING] {order_id[:24]}... - not settled after 5s, treating as success")
+                        # Return success anyway since the order was accepted
+                        # The shares may arrive later
+                        return OrderResult(True, resp)
+                    
+                    # Check if we actually got shares filled (for non-delayed orders)
+                    if matched_amount <= 0 and status not in ('DELAYED', 'LIVE', 'MATCHED'):
+                        logger.warning(f"[ORDER_UNFILLED] {order_id[:24]}... - success but matchedAmount=0 (status={status})")
+                        return OrderResult(False, {
+                            "error": "Order not matched - no shares filled",
+                            "reason": "no_match",
+                            "orderID": order_id,
+                            "status": status,
+                            "matchedAmount": matched_amount
+                        })
+                    
+                    # Order filled or accepted
+                    logger.info(f"[ORDER_FILLED] {order_id} (status={status}, matched=${matched_amount:.2f})")
                     return OrderResult(True, resp)
                 else:
                     err = resp.get("errorMsg", resp.get("error", "Unknown error"))
@@ -678,3 +761,94 @@ class Client:
         assert last_err is not None
         logger.error(f"[ORDER_FAILED] After {max_attempts} attempts: {last_error_msg}")
         raise last_err
+
+    def get_market_info(self, market_index: Optional[int] = None) -> Dict[str, Any]:
+        """Get detailed market info including status from gamma API.
+        
+        Returns:
+            dict with keys: active, closed, question, description, end_date_iso, etc.
+        """
+        slug = self.config.market_slug
+        if not slug:
+            return {"active": True, "closed": False, "question": "Unknown"}
+        
+        idx = market_index if market_index is not None else self.config.market_index
+        
+        try:
+            url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if not data:
+                return {"active": True, "closed": False, "question": slug}
+            
+            markets = data[0].get("markets", [])
+            if not markets:
+                return {"active": True, "closed": False, "question": slug}
+            
+            # Select market by index or find first active
+            market = None
+            if idx is not None and 0 <= idx < len(markets):
+                market = markets[idx]
+            else:
+                for m in markets:
+                    if m.get("active", False) and not m.get("closed", True):
+                        market = m
+                        break
+                if not market:
+                    market = markets[0]
+            
+            return {
+                "active": market.get("active", False),
+                "closed": market.get("closed", False),
+                "question": market.get("question", slug),
+                "description": market.get("description", ""),
+                "end_date_iso": market.get("endDate"),
+                "outcome": market.get("outcome"),
+                "outcome_prices": market.get("outcomePrices"),
+            }
+        except Exception as e:
+            logger.debug(f"Failed to get market info: {e}")
+            return {"active": True, "closed": False, "question": slug}
+
+    def get_wallet_address(self) -> str:
+        """Get the wallet address for this account.
+
+        For EOA (signature_type=0): derives from private key
+        For Gnosis Proxy (signature_type=2): returns the funder address
+
+        Returns:
+            str: Wallet address (0x-prefixed)
+        """
+        if self.config.signature_type == 2:
+            # Gnosis Proxy mode - use funder address
+            return self.config.funder_address or "0x0000000000000000000000000000000000000000"
+        else:
+            # EOA mode - derive from private key
+            from eth_account import Account
+            pk = self.config.private_key
+            if not pk.startswith('0x'):
+                pk = '0x' + pk
+            return Account.from_key(pk).address
+
+    def get_usdc_balance(self) -> float:
+        """Get USDC balance for the wallet.
+
+        Returns:
+            float: USDC balance (0.0 if error or insufficient balance)
+        """
+        try:
+            # Use the CLOB client's balance endpoint
+            balance_dict = self._client.get_balance()
+            if balance_dict and "usdc" in balance_dict:
+                return float(balance_dict["usdc"])
+            return 0.0
+        except Exception as e:
+            logger.debug(f"Failed to get USDC balance: {e}")
+            # Fallback: try to compute from allowed balance
+            try:
+                allowed = self._client.get_allowed_balance()
+                return float(allowed) if allowed else 0.0
+            except Exception:
+                return 0.0
