@@ -156,7 +156,7 @@ def shutdown_handler(signum, frame):
 def main():
     global _bot_instance
     
-    cfg = Config.from_env()
+    raise SystemExit("start_bot is disabled in this setup: provide config via the API/frontend.")
 
     # Generate unique log file for this session
     session_log = get_session_log_file()
