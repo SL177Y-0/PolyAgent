@@ -1,0 +1,98 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - heading "Dashboard" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - button "Toggle theme" [ref=e6]:
+          - img
+          - generic [ref=e7]: Toggle theme
+        - button "Settings" [ref=e8]:
+          - img
+          - text: Settings
+        - button "Kill All" [ref=e9]:
+          - img
+          - text: Kill All
+        - button "Create Bot" [ref=e10]:
+          - img
+          - text: Create Bot
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - heading "Total P&L" [level=3] [ref=e14]
+          - img [ref=e15]
+        - generic [ref=e18]:
+          - generic [ref=e19]: $0.00
+          - paragraph [ref=e20]: Across 0 bots
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - heading "Active Bots" [level=3] [ref=e23]
+          - img [ref=e24]
+        - generic [ref=e26]:
+          - generic [ref=e27]: 0 / 0
+          - paragraph [ref=e28]: Running sessions
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - heading "Win Rate" [level=3] [ref=e31]
+          - generic [ref=e32]: "%"
+        - generic [ref=e33]:
+          - generic [ref=e34]: 0.0%
+          - paragraph [ref=e35]: 0 wins / 0 trades
+      - generic [ref=e36]:
+        - generic [ref=e37]:
+          - heading "Total Balance" [level=3] [ref=e38]
+          - img [ref=e39]
+        - generic [ref=e42]:
+          - generic [ref=e43]: $0.00
+          - paragraph [ref=e44]: USDC Available
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - heading "GLOBAL SETTINGS" [level=2] [ref=e49]
+        - button [ref=e50]:
+          - img
+      - generic [ref=e51]:
+        - img [ref=e52]
+        - paragraph [ref=e54]: These are global execution and system settings. Changes are saved automatically. Bot-specific settings like wallet, market, strategy, and risk parameters are configured per-bot in the Bot Manager.
+      - generic [ref=e55]:
+        - button "EXECUTION" [ref=e56]:
+          - img [ref=e57]
+          - text: EXECUTION
+        - button "SYSTEM" [active] [ref=e59]:
+          - img [ref=e60]
+          - text: SYSTEM
+      - generic [ref=e64]:
+        - generic [ref=e65]:
+          - generic [ref=e66]:
+            - generic [ref=e67]: Killswitch on Shutdown
+            - paragraph [ref=e68]: Auto-close all positions on Ctrl+C
+          - switch [checked] [ref=e69]
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - generic [ref=e72]: WebSocket Enabled
+            - paragraph [ref=e73]: Real-time price updates (~1s latency)
+          - switch [checked] [ref=e74]
+        - generic [ref=e75]:
+          - generic [ref=e76]: Daily Loss Limit (USD)
+          - generic [ref=e77]:
+            - spinbutton [ref=e78]: "0.4"
+            - button "Save" [ref=e79]
+        - generic [ref=e80]:
+          - generic [ref=e81]: Log Level
+          - generic [ref=e82]:
+            - button "DEBUG" [ref=e83]
+            - button "INFO" [ref=e84]
+            - button "WARNING" [ref=e85]
+            - button "ERROR" [ref=e86]
+          - paragraph [ref=e87]: Logging verbosity level for the bot session
+        - generic [ref=e88]:
+          - generic [ref=e89]: Note
+          - paragraph [ref=e90]: Bot-specific settings (wallet, market, strategy, risk) are configured when creating or editing bots in the Bot Manager tab.
+      - paragraph [ref=e92]: Settings are auto-saved when changed. Bot-specific settings are saved when creating/editing bots.
+    - generic [ref=e94]: No bots found. Create one to get started.
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e100] [cursor=pointer]:
+    - img [ref=e101]
+  - alert [ref=e104]
+```
